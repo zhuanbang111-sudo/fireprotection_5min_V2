@@ -1,0 +1,5 @@
+{
+  "name": "消防站点 5 分钟等时圈分析工具",
+  "description": "基于高德地图 API 的消防站 5 分钟等时圈分析工具，支持多源坐标纠偏、实时路况模拟及 GIS 成果导出。",
+  "requestFramePermissions": []
+}
