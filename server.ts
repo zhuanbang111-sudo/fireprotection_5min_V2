@@ -87,47 +87,79 @@ app.post('/api/analyze', async (req, res) => {
   try {
     // 1. 获取周边的 POI 作为锚点
     const aroundUrl = 'https://restapi.amap.com/v3/place/around'; // 高德周边搜索接口
-    const types = '190301|150700|190000|170000|120000|140000|090000|060000'; // 定义搜索的 POI 类型（消防、交通、公共设施等）
     const anchors: string[] = []; // 存储锚点坐标
     
-    // 调用高德周边搜索 API
-    const aroundRes = await axios.get(aroundUrl, {
-      params: {
-        key: apiKey,
-        location: `${lng.toFixed(6)},${lat.toFixed(6)}`,
-        radius,
-        types,
-        offset: 50,
-        page: 1
-      }
-    });
+    // 1.1 中心点全量搜索：尝试获取更多页的 POI (全量类型)
+    for (let page = 1; page <= 3; page++) {
+      const currentKey = apiKeys[(page - 1) % apiKeys.length];
+      const aroundRes = await axios.get(aroundUrl, {
+        params: {
+          key: currentKey,
+          location: `${lng.toFixed(6)},${lat.toFixed(6)}`,
+          radius,
+          // 不指定 types 以获取全量 POI
+          offset: 50,
+          page
+        }
+      });
 
-    // 如果搜索成功，将 POI 坐标加入锚点列表
-    if (aroundRes.data.status === '1' && aroundRes.data.pois) {
-      aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location));
+      if (aroundRes.data.status === '1' && aroundRes.data.pois && aroundRes.data.pois.length > 0) {
+        aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location));
+        if (aroundRes.data.pois.length < 50) break; // 最后一页
+      } else {
+        break;
+      }
     }
 
-    // 添加径向锚点（以中心点为圆心，向 8 个方向延伸）
+    // 1.2 径向搜索优化：沿 8 个方向延伸，并在每个延伸点周边 500 米搜索 POI
+    const radialPromises: Promise<void>[] = [];
     for (let angle = 0; angle < 360; angle += 45) {
       for (const distStep of [0.5, 1.0, 1.3]) {
         const rad = (angle * Math.PI) / 180;
         const g_lng = lng + (radius * distStep * Math.cos(rad)) / (111320 * Math.cos((lat * Math.PI) / 180));
         const g_lat = lat + (radius * distStep * Math.sin(rad)) / 111320;
-        anchors.push(`${g_lng.toFixed(6)},${g_lat.toFixed(6)}`);
+        
+        // 将延伸点本身加入锚点
+        const radialPoint = `${g_lng.toFixed(6)},${g_lat.toFixed(6)}`;
+        anchors.push(radialPoint);
+
+        // 并发搜索延伸点周边 500 米的 POI
+        radialPromises.push((async () => {
+          try {
+            const currentKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+            const res = await axios.get(aroundUrl, {
+              params: {
+                key: currentKey,
+                location: radialPoint,
+                radius: 500,
+                offset: 20,
+                page: 1
+              }
+            });
+            if (res.data.status === '1' && res.data.pois) {
+              res.data.pois.forEach((poi: any) => anchors.push(poi.location));
+            }
+          } catch (e) {
+            console.error('Radial POI search error:', e);
+          }
+        })());
       }
     }
+    await Promise.all(radialPromises);
 
-    const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 50); // 去重并限制锚点数量，防止请求过多
+    // 去重并限制锚点数量。增加到 150 个点以获得更精确的等时圈，同时兼顾 API 消耗。
+    const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 150); 
     const trailPoints: [number, number, number][] = []; // 存储路径点及其到达时间 [经度, 纬度, 时间(秒)]
     const routeUrl = 'https://restapi.amap.com/v3/direction/driving'; // 高德驾车路径规划接口
 
     // 2. 为每个锚点请求路径规划
     const routePromises = uniqueAnchors.map(async (dest, idx) => {
       const strategy = idx % 2 === 0 ? 13 : 17; // 交替使用不同的路径规划策略
+      const currentKey = apiKeys[idx % apiKeys.length];
       try {
         const rRes = await axios.get(routeUrl, {
           params: {
-            key: apiKey,
+            key: currentKey,
             origin: `${lng.toFixed(6)},${lat.toFixed(6)}`,
             destination: dest,
             strategy

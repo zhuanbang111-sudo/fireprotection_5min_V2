@@ -22,6 +22,8 @@ import * as turf from '@turf/turf';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { motion, AnimatePresence } from 'motion/react';
+// @ts-ignore
+import shpwrite from 'shp-write';
 
 // Fix Leaflet icon issue
 // @ts-ignore
@@ -117,7 +119,7 @@ export default function App() {
     const maxLat = Math.max(...lats) + 0.01;
 
     // 2. Create grid
-    const gridRes = 40; // Lower resolution for performance in browser
+    const gridRes = 60; // Increased resolution for better detail
     const gridPoints: any[] = [];
     const cellWidth = (maxLon - minLon) / gridRes;
     const cellHeight = (maxLat - minLat) / gridRes;
@@ -228,7 +230,7 @@ export default function App() {
     XLSX.writeFile(wb, "消防站分析结果.xlsx");
   };
 
-  const exportGeoJSON = () => {
+  const exportSHP = () => {
     const collection = turf.featureCollection(results.map(r => ({
       ...r.geometry,
       properties: {
@@ -237,8 +239,12 @@ export default function App() {
         timestamp: r.timestamp
       }
     })));
-    const blob = new Blob([JSON.stringify(collection)], { type: 'application/json' });
-    saveAs(blob, 'fire_isochrones.geojson');
+    
+    // @ts-ignore
+    shpwrite.download(collection, {
+      folder: 'fire_isochrones',
+      filename: 'fire_isochrones'
+    });
   };
 
   const mapCenter = useMemo(() => {
@@ -397,7 +403,7 @@ export default function App() {
         {/* Content Area */}
         <div className="flex-1 flex flex-col relative">
           {/* Tabs */}
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] flex bg-white/90 backdrop-blur-md p-1 rounded-full shadow-xl border border-white/20">
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1000] flex bg-white/90 backdrop-blur-md p-1 rounded-full shadow-xl border border-white/20">
             <button 
               onClick={() => setActiveTab('map')}
               className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs font-bold transition-all ${
@@ -502,12 +508,12 @@ export default function App() {
                     导出 Excel
                   </button>
                   <button 
-                    onClick={exportGeoJSON}
+                    onClick={exportSHP}
                     disabled={results.length === 0}
                     className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-all disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    导出 GeoJSON
+                    导出 SHP (WGS84)
                   </button>
                 </div>
               </div>
