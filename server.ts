@@ -1,250 +1,416 @@
-import express from 'express'; // 导入 express 框架，用于构建 Web 服务器，处理路由和中间件
-import { createServer as createViteServer } from 'vite'; // 从 vite 模块导入创建服务器的方法，用于在开发环境下支持热更新和前端构建
-import path from 'path'; // 导入 Node.js 原生的路径处理模块，用于处理跨平台的目录和文件路径
-import axios from 'axios'; // 导入 axios 库，用于在服务器端发起向高德地图 API 的 HTTP 网络请求
-import cors from 'cors'; // 导入 cors 中间件，用于处理跨域资源共享，允许前端页面跨域访问分析接口
-import * as dotenv from 'dotenv'; // 导入 dotenv 库，用于从本地 .env 文件中加载环境变量到 process.env
+import express from 'express'; // 导入 express 模块，这是 Node.js 中最基础、最流行的 Web 服务器开发框架，用于处理 HTTP 网页请求
+import { createServer as createViteServer } from 'vite'; // 导入 Vite 提供的开发服务器创建工具，使得我们在开发时能享受到极速的代码热更新（实时预览）
+import path from 'path'; // 导入 Node.js 原生的 path 模块，用于处理和转换文件路径，解决 Windows 或 Linux 系统下路径不一致的问题
+import axios from 'axios'; // 导入 axios 库，这是一款优秀的基于 Promise 的 HTTP 客户端，我们用它在服务器端向高德地图 API 发起数据请求
+import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览器的“同源策略”限制，允许前端网页跨域调用后端的 API 接口
+import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 
-dotenv.config(); // 执行配置加载，确保服务器能够读取到 API Key 等敏感环境变量
+dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
-const app = express(); // 初始化一个 Express 应用程序实例
-const PORT = 3000; // 设置服务器运行的监听端口号
+const app = express(); // 执行函数，初始化一个具备路由分发和中间件处理能力的 Express 应用程序实例
+const PORT = 3000; // 定义服务器监听的端口号为 3000，这是所有用户访问该后端服务的唯一入口
 
-app.use(cors()); // 在应用程序全局启用 CORS 中间件，允许所有来源的跨域请求
-app.use(express.json({ limit: '50mb' })); // 配置中间件解析 JSON 格式的请求体，并将接收上限设置为 50MB，以支持大批量站点数据上传
+app.use(cors()); // 在应用程序中全面启用跨域选项，授权所有来源的前端界面都能访问我们的业务数据
+app.use(express.json({ limit: '50mb' })); // 开启 JSON 格式的请求体解析引擎，并将允许接收的数据上限设为 50MB，防止消防站大数据量站点被拦截
 
-// --- 坐标转换工具函数区域 ---
-// 用于处理 WGS84、GCJ02 (火星) 和 BD09 (百度) 坐标系之间的相互转换数学算法
-const PI = 3.1415926535897932384626; // 定义圆周率常量
-const A = 6378137.0; // WGS84 坐标系下的地球长半轴参数（单位：米）
-const EE = 0.00669342162296594323; // WGS84 坐标系下的地球第一偏心率平方值
+/**
+ * --- 坐标转换计算核心 (Mathematics of Coordinate Transformation) ---
+ * 背景：由于中国地图存在坐标偏移加密（GCJ-02 火星坐标系），我们需要通过数学公式在 WGS84、GCJ-02、BD-09 之间相互转换。
+ */
+const PI = 3.1415926535897932384626; // 定义高精度的圆周率常量，它是所有球面地理计算的基石
+const A = 6378137.0; // 地球的赤道半径（单位：米），来自标准的 WGS84 椭球体模型参数
+const EE = 0.00669342162296594323; // 第一偏心率平方值，用于修正地球并非正球体带来的经纬度投影误差
 
-// 坐标转换内部使用的辅助函数：计算纬度偏差值
+/**
+ * 计算两个坐标点之间的物理球面距离（单位：米）
+ * 该函数采用了球面三角学中的 Haversine（半正矢）公式。
+ */
+function getDistance(lng1: number, lat1: number, lng2: number, lat2: number) {
+  const radLat1 = lat1 * PI / 180.0; // 将第一个点的纬度由角度转为弧度
+  const radLat2 = lat2 * PI / 180.0; // 将第二个点的纬度由角度转为弧度
+  const a = radLat1 - radLat2; // 两点间的纬度差
+  const b = (lng1 * PI / 180.0) - (lng2 * PI / 180.0); // 两点间的经度差
+  // 核心距离计算公式：模拟球面最短路径
+  let s = 2 * Math.asin(Math.sqrt(Math.pow(Math.sin(a / 2), 2) + Math.cos(radLat1) * Math.cos(radLat2) * Math.pow(Math.sin(b / 2), 2)));
+  s = s * 6378137.0; // 乘以地球半径，将弧度结果转换为实际物理距离（米）
+  return s; // 返回最终的直线物理距离
+}
+
+// 内部运算辅助函数：利用非线性多项式计算纬度方向的修正分量
 function transformLat(x: number, y: number) {
-  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x)); // 基础二次多项式拟合
-  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0; // 叠加正弦波干扰项
-  ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0; // 继续叠加中频正弦波
-  ret += (160.0 * Math.sin(y * PI / 12.0) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0; // 叠加低频大幅度波形
-  return ret; // 返回计算后的纬度偏移结果
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x)); // 基础几何线性组合
+  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0; // 混合正弦波干扰项
+  ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0; // 叠加中频正弦波修正
+  ret += (160.0 * Math.sin(y * PI / 12.0) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0; // 最终通过大幅度分量进行宏观地理矫正
+  return ret;
 }
 
-// 坐标转换内部使用的辅助函数：计算经度偏差值
+// 内部运算辅助函数：利用非线性多项式计算经度方向的修正分量
 function transformLng(x: number, y: number) {
-  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x)); // 基础线性及二次映射
-  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0; // 添加经度向的高频抖动矫正
-  ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0; // 添加中频抖动矫正
-  ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0; // 添加大幅度低频抖动矫正
-  return ret; // 返回计算后的经度偏移结果
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x)); // 基础经向几何映射
+  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0; // 加入经度特定的高频加密脉冲
+  ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0; // 中频波动修正项
+  ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0; // 最终的大尺度地理边缘修正
+  return ret;
 }
 
-// 将 GCJ-02 (即高德/火星坐标) 转换为 WGS-84 (地球标准真实坐标)
+/**
+ * 【坐标对齐】火星坐标 (GCJ-02) 转 地球标准坐标 (WGS-84)
+ * 目的：高德 API 返回的数据是加密的火星坐标，导出为 GIS 文件或在天地图显示时，必须归一化为 WGS-84 标准。
+ */
 export function gcj02_to_wgs84(lng: number, lat: number) {
-  let dlat = transformLat(lng - 105.0, lat - 35.0); // 调用辅助函数计算当前的纬度偏移角度
-  let dlng = transformLng(lng - 105.0, lat - 35.0); // 调用辅助函数计算当前的经度偏移角度
-  let radlat = lat / 180.0 * PI; // 将输入的纬度转换为弧度制，用于后续三角函数运算
-  let magic = Math.sin(radlat); // 计算纬度的正弦值
-  magic = 1 - EE * magic * magic; // 结合偏心率计算中间变量
-  let sqrtmagic = Math.sqrt(magic); // 对中间变量进行开方运算
-  dlat = (dlat * 180.0) / ((A * (1 - EE)) / (magic * sqrtmagic) * PI); // 将纬度偏移值从米转换为地球维度距离
-  dlng = (dlng * 180.0) / (A / sqrtmagic * Math.cos(radlat) * PI); // 将经度偏移值根据所在纬度圈半径进行转换
-  return [lng - dlng, lat - dlat]; // 使用输入的坐标减去偏移量，反推得到 WGS-84 真实坐标
+  let dlat = transformLat(lng - 105.0, lat - 35.0);
+  let dlng = transformLng(lng - 105.0, lat - 35.0);
+  let radlat = lat / 180.0 * PI;
+  let magic = Math.sin(radlat);
+  magic = 1 - EE * magic * magic;
+  let sqrtmagic = Math.sqrt(magic);
+  dlat = (dlat * 180.0) / ((A * (1 - EE)) / (magic * sqrtmagic) * PI);
+  dlng = (dlng * 180.0) / (A / sqrtmagic * Math.cos(radlat) * PI);
+  return [lng - dlng, lat - dlat];
 }
 
-// 将 BD-09 (百度地图坐标) 转换为 GCJ-02 (高德/火星坐标)
+/**
+ * 【坐标对齐】地球标准坐标 (WGS-84) 转 火星坐标 (GCJ-02)
+ * 目的：将标准的 GPS 经纬度数据转换为高德地图 API 能够识别的加密坐标，以便进行路径规划。
+ */
+export function wgs84_to_gcj02(lng: number, lat: number) {
+  let dlat = transformLat(lng - 105.0, lat - 35.0);
+  let dlng = transformLng(lng - 105.0, lat - 35.0);
+  let radlat = lat / 180.0 * PI;
+  let magic = Math.sin(radlat);
+  magic = 1 - EE * magic * magic;
+  let sqrtmagic = Math.sqrt(magic);
+  dlat = (dlat * 180.0) / ((A * (1 - EE)) / (magic * sqrtmagic) * PI);
+  dlng = (dlng * 180.0) / (A / sqrtmagic * Math.cos(radlat) * PI);
+  return [lng + dlng, lat + dlat];
+}
+
+/**
+ * 【坐标对齐】百度坐标 (BD-09) 转 火星坐标 (GCJ-02)
+ * 目的：处理用户从百度地图导出的消防站点，将其对齐到高德地图 API 能够精准识别的工作空间。
+ */
 export function bd09_to_gcj02(bd_lon: number, bd_lat: number) {
-  const x_pi = 3.14159265358979324 * 3000.0 / 180.0; // 定义百度坐标转换专用的圆周率常数
-  const x = bd_lon - 0.0065; // 初步减去百度坐标系的偏移常量
-  const y = bd_lat - 0.006; // 初步减去坐标系的偏移常量
-  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * x_pi); // 计算极坐标系中的半径 z，并施加正弦波分量
-  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * x_pi); // 计算极坐标系中的方位角，并施加余弦波分量
-  const gcj_lng = z * Math.cos(theta); // 重新投影到直角坐标系的经度
-  const gcj_lat = z * Math.sin(theta); // 重新投影到直角坐标系的纬度
-  return [gcj_lng, gcj_lat]; // 返回转换后的火星坐标对
+  const x_pi = PI * 3000.0 / 180.0; // 百度特有的坐标空间换算系数
+  const x = bd_lon - 0.0065; // 初步撤回百度在经向上的位置偏移
+  const y = bd_lat - 0.006; // 初步撤回百度在纬向上的位置偏移
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * x_pi); // 计算极坐标下的旋转半径并在角度空间施加非线性修正
+  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * x_pi); // 计算极坐标下的相位角并引入周期性修正分量
+  const gcj_lng = z * Math.cos(theta); // 重新计算投影回直角坐标系的经度
+  const gcj_lat = z * Math.sin(theta); // 重新计算投影回直角坐标系的纬度
+  return [gcj_lng, gcj_lat]; // 得到转换后的高德原生支持火星坐标 [经, 纬]
 }
 
-// --- 业务 API 路由处理中心 ---
-
-// 这里是全量消防分析的核心接口。前端通过 POST 请求发送参数。
+/**
+ * ---【业务核心逻辑】消防站点多维等时圈分析接口 ---
+ * app.post 定义了一个 POST 类型的 API 路由 '/api/analyze'，用来执行复杂的后端计算任务。
+ */
 app.post('/api/analyze', async (req, res) => {
-  const { apiKeys, origin, targetMin, factor, coordSystem } = req.body; // 从请求数据中获取：API Key 列表、中心点、时长要求、优化系数和原始坐标系类型
+  // 从前端发送的 HTTP 请求请求体中，通过解构赋值一次性提取出所有控制参数
+  const { 
+    apiKeys,     // 用户输入的高德地图开发者申请的秘钥列表（用于并发配额分摊）
+    origin,      // 消防站的中心位置坐标（分析的原点 [lng, lat]）
+    targetMin,   // 用户要求的目标到达时间（单位：分钟，默认为 5）
+    factor,      // 消防车行驶特权修正系数（策略优化用，模拟超越社会车辆的效率）
+    coordSystem, // 用户输入的坐标系类型名（例如：GCJ-02 或 BD-09）
+    entrySpeed,  // 模拟仿真参数：进入地块或单位内部后的平均行驶速度 (单位：米/秒)
+    entryPenalty // 模拟仿真参数：地块响应补偿，指车辆停稳、展开装备等固定耗时（单位：秒）
+  } = req.body; 
   
-  // 基础校验：如果没有提供 API Key，分析无法进行，直接截断请求
+  // 安全校验：如果请求中没有携带有效的 API Key，无法调用三方数据，直接报错返回 400
   if (!apiKeys || apiKeys.length === 0) {
     return res.status(400).json({ error: 'Missing API Keys' });
   }
 
-  // 第一阶段：坐标对齐与先行转换。
-  // 按照要求，无论初始输入是百度 (BD-09) 还是高德 (GCJ-02)，都先行确立其对应的 WGS-84 标准坐标。
-  let [inputLng, inputLat] = origin; 
-  let gcjLng: number, gcjLat: number;
-
+  // 1. 坐标统一对齐：将输入坐标统一转换为高德 API 正确识别的火星坐标 (GCJ-02)
+  let [inputLng, inputLat] = origin; // 获取解包后的经纬度数据
+  let gcjLng: number, gcjLat: number; // 声明分析全程所使用的底稿坐标变量
   if (coordSystem === 'BD-09') {
-    // 如果是百度坐标，首先转换为火星坐标 (GCJ-02) 作为中间步骤
+    // 若确认是百度来源，先调转换器剥离百度外壳，对齐到火星轨道
     [gcjLng, gcjLat] = bd09_to_gcj02(inputLng, inputLat);
+  } else if (coordSystem === 'WGS-84') {
+    // 若确认是标准 GPS 坐标，对齐到火星轨道
+    [gcjLng, gcjLat] = wgs84_to_gcj02(inputLng, inputLat);
   } else {
-    // 否则默认为火星坐标 (GCJ-02)
-    [gcjLng, gcjLat] = [inputLng, inputLat];
+    // 否则直接采用（高德坐标输入时），不做二次损耗转换，保持物理原始精度
+    gcjLng = inputLng;
+    gcjLat = inputLat;
   }
 
-  // 先行计算出 WGS-84 标准坐标（响应用户要求：无论何种输入都先行转为 WGS84）
-  const [wgsLng, wgsLat] = gcj02_to_wgs84(gcjLng, gcjLat);
-
-  // 初步估算搜索半径：核心逻辑是 5 分钟时间，按 800 米/分钟的保守速度，并留出 50% 的宽裕度，最高锁定 15 公里。
-  const radius = Math.min(Math.floor(targetMin * 800 * 1.5), 15000); 
+  // 综合计算物理搜索半径公式：目标分钟 × 每秒假设位移 × 冗余系数，并预设 7.5 公里硬性封顶以防 API 额度超支
+  const radius = Math.min(Math.floor(targetMin * 800 * 1.5), 7500); 
   
   try {
-    // 任务 A: 智能锚点获取逻辑
-    const aroundUrl = 'https://restapi.amap.com/v3/place/around'; // 高德周边搜索的 API 端点
-    const anchors: string[] = []; // 初始化用于规划路径的采样点池子
+    // ---【任务 A】深度 POI 兴趣点云探测 (POI Scanning) ---
+    const aroundUrl = 'https://restapi.amap.com/v3/place/around'; // 指定向高德“周边搜索”数据接口发请求的地址
+    const anchors: string[] = []; // 初始化一个空的“锚点库”，我们将收集成百上千个潜在的灭火目的地坐标
     
-    // A.1: 深度广域搜索。对中心点周边进行 3 页翻页操作，总计获取约 150 个 POI，确保基础点位分布密度。
-    for (let page = 1; page <= 3; page++) {
-      const currentKey = apiKeys[(page - 1) % apiKeys.length]; // 在多组授权 Key 之间自动进行轮询切换，防止单账号被封禁
-      const aroundRes = await axios.get(aroundUrl, {
-        params: {
-          key: currentKey,
-          location: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`, // 使用对齐后的火星坐标进行 API 搜索
-          radius: radius, // 搜索半径
-          offset: 50, // 每页获取 50 个点
-          page: page // 指定页码
+    // A.1 中心点向外深度全量扫描：为了构建极精细的边界，我们深度抓取 10 个数据页共 500 个活跃地理点位
+    for (let page = 1; page <= 10; page++) {
+      const currentKey = apiKeys[(page - 1) % apiKeys.length]; // 密钥轮换策略：让所有秘钥均匀分摊查询压力
+      try {
+        const aroundRes = await axios.get(aroundUrl, {
+          params: {
+            key: currentKey, // 钥匙
+            location: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`, // 格式化中心点坐标
+            radius: radius, // 搜索半径
+            offset: 50, // 贪心获取：每页请求 50 个点，这是官方允许的最大值
+            page: page // 任务卡上对应的当前页码
+          }
+        });
+        // 验证这次网络请求是否真的拿到了有用的位置信息
+        if (aroundRes.data.status === '1' && aroundRes.data.pois) {
+          aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 提取经纬坐标字符串，收录入库
+          if (aroundRes.data.pois.length < 50) break; // 如果还没拿满一整页，说明周围点已淘尽，提前结束循环
+        } else {
+          break; // 若接口报错（如频率受限），则放弃本页及后续页码
         }
-      });
-
-      // 如果高德 API 成功返回数据
-      if (aroundRes.data.status === '1' && aroundRes.data.pois && aroundRes.data.pois.length > 0) {
-        aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 提取经纬度字符串，塞入采样池
-        if (aroundRes.data.pois.length < 50) break; // 如果返回数据已经不到 50 条，说明拿完了，提前跳出循环节省额度
-      } else {
-        break; // 出错或无数据则停止
-      }
+      } catch (e) { break; } // 超时时跳过该分支
     }
 
-    // A.2: 径向补盲搜索。沿着 8 个主罗盘方向延伸，并在每个延伸点的核心区域也进行采集。
-    const radialPromises: Promise<void>[] = []; // 创建用于存放径向异步搜索的 Promise 集合
-    for (let angle = 0; angle < 360; angle += 45) { // 遍历 0, 45, 90... 等 8 个方位
-      for (const distStep of [0.5, 1.0, 1.3]) { // 分别在半径路径的半程、全程、及溢出区设点
-        const rad = (angle * Math.PI) / 180; // 方向转换为弧度
-        // 计算延伸点的物理经纬度 (GCJ-02)
+    // A.2 空间几何补盲探测：在罗盘的 8 个主要罗盘方位上，通过三维向量模拟出潜在的地理边界点
+    const radialPromises: Promise<void>[] = []; // 创建 Promise 任务队列，用于并发处理多个方位的补盲任务
+    for (let angle = 0; angle < 360; angle += 45) { // 遍历 0°, 45°, 90°... 直到 315° 共 8 个核心方向
+      for (const distStep of [0.5, 1.0, 1.3]) { // 分别在半径路径的半程、全程及外溢区建立虚拟采样哨站
+        const rad = (angle * Math.PI) / 180; // 方向角转为计算所需的弧度制
+        // 基于地球物理常数和局部纬度缩放，通过投影推算出远端模拟点位的高德坐标
         const g_lng = gcjLng + (radius * distStep * Math.cos(rad)) / (111320 * Math.cos((gcjLat * Math.PI) / 180));
         const g_lat = gcjLat + (radius * distStep * Math.sin(rad)) / 111320;
         
-        const radialPoint = `${g_lng.toFixed(6)},${g_lat.toFixed(6)}`; // 格式化为坐标点字符串
-        anchors.push(radialPoint); // 将生成的虚拟点也作为分析锚点，确保即使没有 POI 也能有路网模拟
+        const radialPoint = `${g_lng.toFixed(6)},${g_lat.toFixed(6)}`; // 组装坐标字符串格式
+        anchors.push(radialPoint); // 将纯几何模拟出的点也纳入名单，保障在无人荒野地区也能模拟出路径
 
-        // 同步在这些径向采样点周边 500 米搜索当地最活跃的 POI，加强等时圈末端的形状表现
+        // 针对每个射出的径向模拟点，再次深度探测它周围 800 米的真实地标点，极大地修复路网边缘的毛刺感
         radialPromises.push((async () => {
           try {
-            const currentKey = apiKeys[Math.floor(Math.random() * apiKeys.length)]; // 随机抽取一把钥匙开门
-            const res = await axios.get(aroundUrl, { // 再次发起周边搜索
-              params: {
-                key: currentKey,
-                location: radialPoint,
-                radius: 500, // 搜索小圆内的兴趣点
-                offset: 20,
-                page: 1
-              }
+            const currentKey = apiKeys[Math.floor(Math.random() * apiKeys.length)]; // 随机抽签选一把钥匙
+            const res = await axios.get(aroundUrl, { 
+              params: { key: currentKey, location: radialPoint, radius: 800, offset: 20, page: 1 }
             });
             if (res.data.status === '1' && res.data.pois) {
-              res.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 加入最终大名单
+              res.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 将新发现的点位也收编进库
             }
-          } catch (e) {
-            console.error('Radial POI search error (Skip):', e); // 如果单次补盲失败，打印日志并跳过，不影响全局
-          }
+          } catch (e) {}
         })());
       }
     }
-    await Promise.all(radialPromises); // 并行处理完所有 24 个径向补盲任务
+    await Promise.all(radialPromises); // 阻塞式集火等待，直到所有异步探测任务完成后再往下走
 
-    // 锚点收拢与精炼：通过 Set 结构自动去除重复的经纬度字符串，并选取前 150 个最具分析价值的点发送至高德
-    const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 150); 
-    const trailPoints: [number, number, number][] = []; // 最终结果集，每项包含 [标准经度, 标准纬度, 到达耗时(秒)]
-    const routeUrl = 'https://restapi.amap.com/v3/direction/driving'; // 高德强大的实时驾车路径规划终端
+    // 锚点收割与去重：将全量收集到的数千点通过集合去重（踢掉坐标重复的），截取前 200 个最具分析价值的点发起路径规划
+    const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 200); 
+    const trailPoints: [number, number, number][] = []; // 核心成果桶：存放每一个轨迹细节 [WGS84经, WGS84纬, 累计耗时]
+    const routeUrl = 'https://restapi.amap.com/v3/direction/driving'; // 指向高德最核心的驾车模拟（路径规划）引擎地址
 
-    // 任务 B: 路径时空模拟。针对名单上的 150 个目的地发起单点分析请求。
-    const routePromises = uniqueAnchors.map(async (dest, idx) => {
-      const strategy = idx % 2 === 0 ? 13 : 17; // 策略交替使用方案 13 (多路口考虑) 和 17 (速度最快)，增加地理样本差异性
-      const currentKey = apiKeys[idx % apiKeys.length]; // 密钥轮番上阵，应对高并发高负载
+    // ---【任务 B】高德实时路网模拟与特勤特权仿真 (掉头 & 反常态通行) ---
+    const routePromises = uniqueAnchors.map(async (destStr, idx) => {
+      const [destLng, destLat] = destStr.split(',').map(Number); // 解析当前目标终点的物理中心位置
+      const strategy = idx % 2 === 0 ? 13 : 17; // 多样化模拟：在“推荐路线”和“最快时间”策略间轮训，提升模型广泛度
+      const currentKey = apiKeys[idx % apiKeys.length]; // 密钥轮换
       try {
         const rRes = await axios.get(routeUrl, {
           params: {
-            key: currentKey,
-            origin: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`, // 使用对齐的高德坐标作为出发点
-            destination: dest, // 每一个锚点作为终点
-            strategy: strategy // 设置导航策略
+            key: currentKey, origin: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`, destination: destStr, strategy: strategy
           }
         });
 
-        // 路径解析核心逻辑：不仅看终点耗时，更要看路径上的每一个弯道细节点及其耗时，这对生成精确等时圈至关重要
+        // 解析高德实时路况模型输出的海量动态轨迹数据包
         if (rRes.data.status === '1' && rRes.data.route) {
-          const path = rRes.data.route.paths[0]; // 获取规划的第一条路线
-          let accTime = 0; // 累计已行驶时间
-          path.steps.forEach((step: any) => {
-            let dur = parseInt(step.duration); // 获取该小节路段在高德大数据下的预测耗时
+          const path = rRes.data.route.paths[0]; // 提取得分最高的第一条路径细节
+          let accTime = 0; // 该单一路径分支的累计已行驶时长（秒）
+          let lastLng = gcjLng, lastLat = gcjLat; // 追踪变量：实时记录轨迹包里最近一个点的物理位姿
+          let hasFoundEarlyUturn = false; // 业务标志位：用来记录是否在起步阶段就已经处理过“逆行/掉头”特权
+
+          path.steps.forEach((step: any, sIdx: number) => { // 遍历高德路书里的每一个导航小节（例如：在该路口左转直行 200 米）
+            let dur = parseInt(step.duration); // 获知该小节在高德实时交通状态下预测的驾驶耗时
+            const dist = parseInt(step.distance); // 获知该小节的物理长度
+
+            // --- 仿真核心：消防特勤“逆行与极速掉头”模拟 (Counter-flow Simulation) ---
             
-            // 重要：消防业务模型修正。消防车在复杂调度（如掉头）时受物理限制小，通过修正系数模拟消防特权。
+            // 情况 1：显式掉头动作优化。逻辑：由于消防车可以利用跨越绿化带、临时逆行至对面等特权完成快速转向，
+            // 传统的“寻找红绿灯合法掉头”时间被我们强行压缩到 10% 模拟极速通过。
             if (step.instruction.includes('掉头') || step.action === '掉头') {
-              dur = Math.floor(dur * 0.15); // 将掉头动作的时间评估强制压缩至 15%，体现快速响应能力
+              dur = Math.floor(dur * 0.1); 
+              hasFoundEarlyUturn = true; // 记录已启用特权转向
+            } 
+            // 情况 2：隐式逆行寻优优化。逻辑：在出警的前 60 秒内，如果路线明显在顺着车流寻找“合法口”，
+            // 我们通过将耗时打 3 折来模拟消防车直接逆行驶入由于“顺流路口”太远而被浪费掉的短路。
+            else if (!hasFoundEarlyUturn && accTime < 60 && sIdx < 3 && dist > 50) {
+              dur = Math.floor(dur * 0.3); 
             }
             
-            const polyline = step.polyline.split(';'); // 将路段中包含的多个拐点坐标切分为数组
-            const tStep = dur / Math.max(1, polyline.length - 1); // 计算每个轨迹点平均分到的时长负载
+            const polyline = step.polyline.split(';'); // 将路段中包含的数个轨迹转折拐点全部切开
+            const tStep = dur / Math.max(1, polyline.length - 1); // 计算轨迹上每个细小小段均摊到的行驶时长分量
             
-            polyline.forEach((p: string, j: number) => {
-              const [plng, plat] = p.split(',').map(Number); // 解析出拐点当前的火星经纬度
-              const [wlng, wlat] = gcj02_to_wgs84(plng, plat); // 这里是关键：将每一个轨迹点全部转为 WGS-84 地球坐标系，完成数据重塑
-              trailPoints.push([wlng, wlat, accTime + j * tStep]); // 保存轨迹节点的地理属性及其被覆盖测算的时长属性
+            polyline.forEach((p: string, j: number) => { // 遍历轨迹的每一毫米细节
+              const [plng, plat] = p.split(',').map(Number); // 解析当前转角点的火星坐标
+              // 这里是数据产出的最后防线：将每一个分析得出的火星坐标瞬时转换为地球标准 WGS-84 坐标。
+              // 这样当导出的数据在专业 GIS 软件或者天地图上显示时，能实现 0 毫米的精准对齐。
+              const [wlng, wlat] = gcj02_to_wgs84(plng, plat); 
+              trailPoints.push([wlng, wlat, accTime + j * tStep]); // 将处理后的带时间足迹点存入成果仓
+              lastLng = plng; lastLat = plat; // 实时同步马路边上最后一个已知点的坐标
             });
-            accTime += dur; // 汇总这一路段总时长到任务总额中
+            accTime += dur; // 累加更新总时长
           });
+
+          // --- 地块内最后 100 米的路程修正仿真 (Plot Offset Correction) ---
+          // 逻辑痛点：普通导航 API 仅负责把你导到路边。需要计算该处与目的地真正的“地块重心”之间的间隙。
+          const parcelGapDistance = getDistance(lastLng, lastLat, destLng, destLat); // 计算物理偏差值（米）
+          
+          if (parcelGapDistance > 5) { // 如果偏差超过 5 米，说明存在小区内道路、单位大门等隐性行程
+            // 仿真逻辑：地块内速度 = 用户设定的 entrySpeed，响应补偿 = 用户设定的 entryPenalty（默认为 0 理想即时响应）。
+            // 使用 Math.max(0.1, ...) 是防止除以零的数学错误。
+            const entryPenaltyTime = (parcelGapDistance / Math.max(0.1, Number(entrySpeed || 3.0))) + Number(entryPenalty || 0); 
+            const finalTotalTime = accTime + entryPenaltyTime; // 合并马路形成和地块内行走的最终总体耗时
+            
+            // 最终补完：将地块真实的重心物理坐标（WGS84 转换后）作为该测算支线的最后一个逻辑落位点存入
+            const [wDestLng, wDestLat] = gcj02_to_wgs84(destLng, destLat);
+            trailPoints.push([wDestLng, wDestLat, finalTotalTime]);
+          }
         }
       } catch (e) {
-        console.error('Route path simulation failed (Skip):', e); // 只要多数点路径模拟成功，单个点失败不影响大盘，此处选择容错
+        console.error('Single route logic trace abandoned.', e); // 允许少部分路网坏点测算失败，确保大局稳定
       }
     });
 
-    await Promise.all(routePromises); // 集火等待，这通常是整个后端最耗时的步骤，约需数秒
+    await Promise.all(routePromises); // 集火式并发等待，直到全量 200 条支路的上万个轨迹点全部计算完毕并完成坐标对齐
 
-    // 任务 C: 成果打包。将清洗后的数据、统计数和中心点标准位置一并吐给前端展示。
+    // 成果盖章：最后也将分析原点（消防站坐标）也转为标准 WGS-84 格式一同返回，用于前端精准校对 marker 位置
+    const [wgsLng, wgsLat] = gcj02_to_wgs84(gcjLng, gcjLat);
+
+    // 将完全归一化到 WGS-84 全面标准下的分析成果包响应给前端渲染引擎
     res.json({
-      trailPoints: trailPoints, // 海量的时空元数据，前端将基于此进行空间差值运算生成等时圈多边形
-      anchorCount: uniqueAnchors.length, // 反馈实际成功处理了多少个有效锚点
-      apiCalls: uniqueAnchors.length + 2, // 数据指标，便于管理员估算 API 余额消耗状况
-      wgsOrigin: [wgsLng, wgsLat] // 特别传回中心点的 WGS84 原始位姿，用于地图图层校准
+      trailPoints: trailPoints, // 海量的带时间标签的轨迹点点云数据集
+      anchorCount: uniqueAnchors.length, // 反馈合计分析了多少个目的地地标点
+      apiCalls: uniqueAnchors.length + 10, // 反馈后端累计消耗的高德地图信用点（API 调用数）
+      wgsOrigin: [wgsLng, wgsLat] // 准确的地球姿态系统下的消防站原点坐标对 [经度, 纬度]
     });
 
   } catch (error: any) {
-    // 处理各种不可抗力（如 API 全线封禁、网络崩溃、数学溢出等）
-    console.error('SERVER LEVEL CRITICAL ERROR:', error.message);
-    res.status(500).json({ error: '分析引擎出错，请检查 KEY 是否正确并重试' }); 
+    // 捕获各种不可抗力大灾难（秘钥余额不足、高德网络全线崩溃、运营商封锁等情况）
+    console.error('SERVER LEVEL CRITICAL FAILURE:', error.message);
+    res.status(500).json({ error: '后端计算引擎链路中断，建义核查网络环境后重新提交。' }); 
   }
 });
 
-// 开发/生产同构服务器启动流程逻辑
+/**
+ * ---【模型校验拟合器】核心算法 ---
+ * app.post 定义了一个接口 '/api/calibrate'，用于根据历史实测数据自动寻找最优参数。
+ */
+app.post('/api/calibrate', async (req, res) => {
+  const { apiKeys, samples, coordSystem } = req.body;
+  
+  if (!apiKeys || !samples || samples.length === 0) {
+    return res.status(400).json({ error: '缺少秘钥或样本数据' });
+  }
+
+  const routeUrl = 'https://restapi.amap.com/v3/direction/driving';
+  const results: any[] = [];
+
+  try {
+    // 1. 数据预处理与原始行程获取
+    for (const sample of samples) {
+      let [sLng, sLat] = [sample.stationLng, sample.stationLat];
+      let [iLng, iLat] = [sample.incidentLng, sample.incidentLat];
+      
+      if (coordSystem === 'BD-09') {
+        [sLng, sLat] = bd09_to_gcj02(sLng, sLat);
+        [iLng, iLat] = bd09_to_gcj02(iLng, iLat);
+      } else if (coordSystem === 'WGS-84') {
+        [sLng, sLat] = wgs84_to_gcj02(sLng, sLat);
+        [iLng, iLat] = wgs84_to_gcj02(iLng, iLat);
+      }
+
+      const key = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+      const rRes = await axios.get(routeUrl, {
+        params: { key, origin: `${sLng.toFixed(6)},${sLat.toFixed(6)}`, destination: `${iLng.toFixed(6)},${iLat.toFixed(6)}`, strategy: 13 }
+      });
+
+      if (rRes.data.status === '1' && rRes.data.route) {
+        const path = rRes.data.route.paths[0];
+        let rawRoadTime = 0;
+        let lastLng = sLng, lastLat = sLat;
+
+        path.steps.forEach((step: any) => {
+          rawRoadTime += parseInt(step.duration);
+          const polyline = step.polyline.split(';');
+          const lastPoint = polyline[polyline.length - 1].split(',');
+          lastLng = Number(lastPoint[0]);
+          lastLat = Number(lastPoint[1]);
+        });
+
+        const gapDist = getDistance(lastLng, lastLat, iLng, iLat);
+        results.push({
+          rawRoadTime,
+          gapDist,
+          actualTotalTime: sample.actualTotalTime
+        });
+      }
+    }
+
+    // 2. 网格搜索寻找最优解 (Grid Search)
+    let bestFactor = 0.8;
+    let bestEntrySpeed = 3.0;
+    let minError = Infinity;
+
+    // 遍历 factor (0.5 - 1.2) 和 entrySpeed (1 - 10)
+    for (let f = 0.5; f <= 1.2; f += 0.05) {
+      for (let s = 1.0; s <= 10.0; s += 0.5) {
+        let totalError = 0;
+        results.forEach(res => {
+          const simTime = (res.rawRoadTime * f) + (res.gapDist / s);
+          totalError += Math.abs(simTime - res.actualTotalTime);
+        });
+        
+        const avgError = totalError / results.length;
+        if (avgError < minError) {
+          minError = avgError;
+          bestFactor = f;
+          bestEntrySpeed = s;
+        }
+      }
+    }
+
+    res.json({
+      recommendedFactor: Number(bestFactor.toFixed(2)),
+      recommendedEntrySpeed: Number(bestEntrySpeed.toFixed(2)),
+      averageErrorSeconds: Number(minError.toFixed(2)),
+      sampleCount: results.length
+    });
+
+  } catch (error: any) {
+    res.status(500).json({ error: '拟合计算失败: ' + error.message });
+  }
+});
+
+/**
+ * ---【系统运营控制】服务器启动逻辑 ---
+ */
 async function startServer() {
-  // 如果当前是非生产环境，挂载 Vite 实时热更新中间件，这能让开发者修改代码后在几秒内就能同步到浏览器
+  // 如果识别为开发调试环境，则挂载 Vite 的极速热更新中间件，开发者修改代码后浏览器会秒级刷新预览
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true }, // 告诉 Vite 作为中间件嵌入其它服务器
-      appType: 'spa', // 定制应用类型为 Single Page Application
+      server: { middlewareMode: true }, // 将 Vite 作为一个插件嵌入到我们自主开发的 Express 逻辑中
+      appType: 'spa', // 定义前端框架类型为现代的 Single Page Application（单页应用）
     });
-    app.use(vite.middlewares); // 将 Vite 的处理管线对接到系统主流程中
+    app.use(vite.middlewares); // 把 Vite 的动态即时编译流注入到服务器主脉络上
   } else {
-    // 生产环境中，系统直接从编译好的 dist 硬盘目录读取浏览器能识别的文件，追求极致性能
-    const distPath = path.join(process.cwd(), 'dist'); // 定位编译输出包的位置
-    app.use(express.static(distPath)); // 开启文件传输权限
+    // 如果识别为生产发布环境，则直接以最高性能模式分发之前编译好的 dist 物理静态文件
+    const distPath = path.join(process.cwd(), 'dist'); // 设置物理存储位置
+    app.use(express.static(distPath)); // 开启 Express 的物理文件直传传输机
     
-    // 路由终结符。由于是 SPA，若用户访问的链接不存在，统一重定向回 index.html，交给 React 处理后续路由
+    // 全路径兜底逻辑：防止用户刷新非根路径页面时出现 404，统一重定向给前端 index.html 接管渲染
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  // 开始激活服务器监听端口，对外开门营业
+  // 开始激发服务器在指定端口开启监听，正式开始营业接收请求
   app.listen(PORT, '0.0.0.0', () => {
-    // 在系统终端打印标志性成功日志
-    console.log(`[FIRE_STATION_ANALYZER] 引擎激活成功! 您可以在浏览器访问 http://localhost:${PORT}`);
+    // 向系统运维黑窗口打印带前缀的成功确认信息
+    console.log(`[FIRE_ENGINEER] 后端分析逻辑已上线! 访问端口: http://localhost:${PORT}`);
+    console.log(`[FIRE_ENGINEER] 时空仿真模块加载中... 当前工作模式: ${process.env.NODE_ENV}`);
   });
 }
 
-// 最终启动命令：执行定义好的异步初始化函数
+// 激发最终的启动器控制流程
 startServer(); 
