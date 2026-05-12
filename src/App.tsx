@@ -665,6 +665,11 @@ export default function App() {
                         <p className="text-[10px] text-slate-500 text-center leading-relaxed">
                           基于 {calibrationResult.sampleCount} 个有效样本，平均误差 <span className={`font-bold ${calibrationResult.averageErrorSeconds > 60 ? 'text-orange-500' : 'text-green-600'}`}>{calibrationResult.averageErrorSeconds}</span> 秒。
                         </p>
+                        {calibrationResult.recommendedFactor >= 1.0 && (
+                          <div className="px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-[9px] text-red-600 font-medium">
+                            ⚠️ 警告：标定系数 ≥ 1.0。这意味着样本显示消防车比社会车辆更慢，请务必检查“样本坐标系”选择是否正确。
+                          </div>
+                        )}
                         {calibrationResult.trimmedCount > 0 && (
                           <p className="text-[9px] text-slate-400 text-center">
                             (模型已自动剔除 {calibrationResult.trimmedCount} 个极大离群点以优化拟合度)

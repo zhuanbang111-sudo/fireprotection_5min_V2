@@ -329,7 +329,7 @@ app.post('/api/calibrate', async (req, res) => {
       }
     }
 
-    // 2. 网格搜索寻找最优解 (Grid Search + Outlier Trimming)
+    // 2. 网格搜索寻找最优解 (Grid Search + Physical Constraints + Penalty)
     if (results.length === 0) {
       return res.json({
         recommendedFactor: 0.8,
@@ -342,11 +342,11 @@ app.post('/api/calibrate', async (req, res) => {
 
     let bestFactor = 0.8;
     let bestEntrySpeed = 3.0;
-    let minError = Infinity;
+    let minScore = Infinity;
 
-    // 遍历 factor (0.4 - 1.4) 和 entrySpeed (0.5 - 15)
-    for (let f = 0.4; f <= 1.4; f += 0.02) {
-      for (let s = 0.5; s <= 15.0; s += 0.5) {
+    // 遍历 factor (0.4 - 1.2) 和 entrySpeed (1.0 - 15.0)
+    for (let f = 0.4; f <= 1.2; f += 0.02) {
+      for (let s = 1.0; s <= 15.0; s += 0.5) {
         // 计算每个样本在该参数下的误差
         const errors = results.map(item => {
           const simTime = (item.rawRoadTime * f) + (item.gapDist / s);
@@ -354,25 +354,39 @@ app.post('/api/calibrate', async (req, res) => {
         });
 
         // --- 核心优化：鲁棒性拟合 (Robust Fitting) ---
-        // 排序误差并剔除最极端的 20% 样本（防止偏离巨大的“脏数据”带偏整个模型）
         errors.sort((a, b) => a - b);
         const keepCount = Math.max(1, Math.floor(errors.length * 0.8));
         const trimmedErrors = errors.slice(0, keepCount);
-        
         const avgError = trimmedErrors.reduce((sum, e) => sum + e, 0) / keepCount;
 
-        if (avgError < minError) {
-          minError = avgError;
+        // --- 核心优化：引入“物理惩罚项” (Physical Regularization) ---
+        // 增加一个分数惩罚，让模型避免选择不合理的极端值
+        let penalty = 0;
+        if (f > 0.95) penalty += (f - 0.95) * 500; // factor 接近或超过 1.0 时显著惩罚
+        if (s < 2.0) penalty += (2.0 - s) * 200;   // 速度低于 2m/s (7km/h) 时显著惩罚
+        
+        const currentScore = avgError + penalty;
+
+        if (currentScore < minScore) {
+          minScore = currentScore;
           bestFactor = f;
           bestEntrySpeed = s;
         }
       }
     }
 
+    // 计算最终选定参数下的真实物理误差（不含惩罚项）
+    const finalErrors = results.map(item => {
+      const simTime = (item.rawRoadTime * bestFactor) + (item.gapDist / bestEntrySpeed);
+      return Math.abs(simTime - item.actualTotalTime);
+    });
+    finalErrors.sort((a, b) => a - b);
+    const finalAvgError = finalErrors.slice(0, Math.floor(finalErrors.length * 0.8)).reduce((a, b) => a + b, 0) / Math.max(1, Math.floor(finalErrors.length * 0.8));
+
     res.json({
       recommendedFactor: Number(bestFactor.toFixed(2)),
       recommendedEntrySpeed: Number(bestEntrySpeed.toFixed(2)),
-      averageErrorSeconds: Number(minError.toFixed(2)),
+      averageErrorSeconds: Number(finalAvgError.toFixed(2)),
       sampleCount: results.length,
       trimmedCount: Math.floor(results.length * 0.2)
     });
