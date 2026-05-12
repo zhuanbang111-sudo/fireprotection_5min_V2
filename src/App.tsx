@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react'; // 导入 React 核心库及常用钩子
+import React, { useState, useCallback, useMemo, useEffect } from 'react'; // 导入 React 核心库及常用钩子
 import { 
   Upload,         // 上传图标
   Settings,       // 设置图标
@@ -17,7 +17,9 @@ import {
   FastForward,    // 快进图标（用于分析功能）
   Database,       // 数据库图标
   FileSpreadsheet, // 表格文件图标
-  Calculator      // 计算器图标
+  Calculator,     // 计算器图标
+  LogIn,          // 登录图标
+  LogOut          // 登出图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
 import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
@@ -28,6 +30,15 @@ import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
+import { initializeApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import firebaseConfig from '../firebase-applet-config.json';
+
+// --- Firebase 初始化 ---
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
+const googleProvider = new GoogleAuthProvider();
+
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
 
@@ -77,7 +88,11 @@ function MapUpdater({ center }: { center: [number, number] }) {
 const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 
 export default function App() {
-  // --- 状态定义 ---
+  // --- 权限相关状态 ---
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
   const [stations, setStations] = useState<Station[]>([]); // 上传解析后的所有待分析站点列表
   const [coordSystem, setCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('WGS-84'); // 上传数据的原始坐标系（默认设为 WGS-84，因为 GPS 数据最常见）
@@ -99,6 +114,96 @@ export default function App() {
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
+
+  // --- 监听 Auth 变化 ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthChecking(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- 登录/登出处理 ---
+  const handleLogin = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error('Login failed:', error);
+      alert('登录失败，请重试');
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setResults([]);
+      setStations([]);
+      addLog('已登出系统');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
+
+  // --- 登录页面组件 ---
+  const LoginView = () => (
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
+      {/* 背景装饰轨迹 */}
+      <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-red-600 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600 rounded-full blur-[120px]" />
+      </div>
+
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative z-10 w-full max-w-md"
+      >
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl space-y-8">
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-600/30">
+              <MapIcon className="w-8 h-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-black text-white tracking-tight mt-4">
+              FireIsochrone <span className="text-red-500">Pro V2</span>
+            </h1>
+            <p className="text-slate-400 text-sm font-medium">消防站点 5 分钟等时圈分析专家系统</p>
+          </div>
+
+          <div className="space-y-4">
+            <button
+              onClick={handleLogin}
+              className="w-full h-14 bg-white hover:bg-slate-100 text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg"
+            >
+              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+              使用 Google 账号登录
+            </button>
+            <p className="text-[10px] text-slate-500 text-center px-6 leading-relaxed">
+              受限制的访问权限：该系统仅供授权用户进行消防仿真分析与规划实操。
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-8 text-center">
+          <p className="text-slate-600 text-[11px] font-medium tracking-widest uppercase">
+            Designed for Emergency Services
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginView />;
+  }
 
   // 处理 Excel/CSV 文件的通用上传函数
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'station' | 'calibration' = 'station') => {
@@ -367,17 +472,38 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       {/* 顶部页眉区域：固定在顶部，提供标题和全局分析按钮 */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
-        <div className="flex items-center gap-3">
-          {/* 红色 Logo 图标容器 */}
-          <div className="bg-red-600 p-2 rounded-lg">
-            <MapIcon className="text-white w-6 h-6" />
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            {/* 红色 Logo 图标容器 */}
+            <div className="bg-red-600 p-2 rounded-lg">
+              <MapIcon className="text-white w-6 h-6" />
+            </div>
+            <div>
+              {/* 主标题与副标题 */}
+              <h1 className="text-lg font-black tracking-tight">FireIsochrone <span className="text-red-600">PRO V2</span></h1>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Emergency Response Engine</p>
+            </div>
           </div>
-          <div>
-            {/* 主标题与副标题 */}
-            <h1 className="text-xl font-bold tracking-tight">消防站点可达性圈分析工具V2</h1>
-            <p className="text-xs text-slate-500 font-medium">基于高德地图 API & 实时路况模拟</p>
+          
+          <div className="h-6 w-px bg-slate-200 mx-2" />
+          
+          {/* 用户信息与退出 */}
+          <div className="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200 shadow-inner">
+            {user.photoURL && (
+              <img src={user.photoURL} alt={user.displayName || ''} className="w-6 h-6 rounded-full border border-slate-300" />
+            )}
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black text-slate-700 leading-none">{user.displayName}</span>
+              <button 
+                onClick={handleLogout}
+                className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter"
+              >
+                Sign Out
+              </button>
+            </div>
           </div>
         </div>
+
         <div className="flex items-center gap-2">
           {/* 开始分析按钮：当正在分析或未加载站点时置灰不可用 */}
           <button 
