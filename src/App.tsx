@@ -7,6 +7,7 @@ import {
   Map as MapIcon, // 地图图标（重命名为 MapIcon 避免冲突）
   FileText,       // 文档图标
   AlertCircle,    // 警告图标
+  Scan,           // 扫描图标（用于坐标系）
   Loader2,        // 加载动画图标
   CheckCircle2,   // 成功图标
   XCircle,        // 失败图标
@@ -80,6 +81,7 @@ export default function App() {
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
   const [stations, setStations] = useState<Station[]>([]); // 上传解析后的所有待分析站点列表
   const [coordSystem, setCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('WGS-84'); // 上传数据的原始坐标系（默认设为 WGS-84，因为 GPS 数据最常见）
+  const [calibrationCoordSystem, setCalibrationCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('WGS-84'); // 标定数据的原始坐标系
   const [targetMin, setTargetMin] = useState<number>(5); // 设定的目标到达时间（默认 5 分钟）
   const [factor, setFactor] = useState<number>(0.8); // 消防特权系数（车速补益，越小越快）
   const [walkSpeed, setWalkSpeed] = useState<number>(4.0); // 步行速度补偿（用于等时圈末端网格计算）
@@ -142,21 +144,34 @@ export default function App() {
     addLog('开始模型参数拟合计算...');
 
     try {
-      // 准备样本数据，允许不同的 Excel 表头兼容
+      // 准备样本数据，允许不同的 Excel 表头兼容（支持中文、高德缩写以及标定说明中定义的英文全称）
       const samples = calibrationData.map(row => ({
-        stationLng: Number(row['消防站经度'] || row['lng']),
-        stationLat: Number(row['消防站纬度'] || row['lat']),
-        incidentLng: Number(row['火警点经度'] || row['dest_lng']),
-        incidentLat: Number(row['火警点纬度'] || row['dest_lat']),
-        actualTotalTime: Number(row['实际行驶总耗时 (秒)'] || row['actual_time'])
-      })).filter(s => !isNaN(s.stationLng) && !isNaN(s.actualTotalTime)); // 过滤非数值行
+        stationLng: Number(row['stationLng'] || row['消防站经度'] || row['lng'] || row['消防站经度'] || row['经度']),
+        stationLat: Number(row['stationLat'] || row['消防站纬度'] || row['lat'] || row['消防站纬度'] || row['纬度']),
+        incidentLng: Number(row['incidentLng'] || row['火警点经度'] || row['dest_lng'] || row['火警点经度']),
+        incidentLat: Number(row['incidentLat'] || row['火警点纬度'] || row['dest_lat'] || row['火警点纬度']),
+        actualTotalTime: Number(row['actualTotalTime'] || row['实际总耗时(秒)'] || row['actual_time'] || row['实际行驶总耗时 (秒)'])
+      })).filter(s => 
+        !isNaN(s.stationLng) && s.stationLng !== 0 && 
+        !isNaN(s.actualTotalTime) && s.actualTotalTime > 0
+      );
+
+      if (samples.length === 0) {
+        throw new Error('样本解析失败：未在表格中找到有效的经纬度或耗时数据。请检查表头名是否符合规范（详见下方说明）。');
+      }
+
+      addLog(`开始对 ${samples.length} 条有效样本进行模型拟合...`);
 
       // 请求后端拟合接口
       const response = await axios.post('/api/calibrate', {
         apiKeys: keyList,
         samples,
-        coordSystem
+        coordSystem: calibrationCoordSystem
       });
+
+      if (response.data.sampleCount === 0) {
+        throw new Error('后端未能成功分析任何样本路径，请检查 API Key 或样本点是否在路网外。');
+      }
 
       // 应用拟合出的最优参数
       setCalibrationResult(response.data);
@@ -215,9 +230,26 @@ export default function App() {
     const isobands = turf.isobands(featureCollection, breaks, { zProperty: 'time' });
     
     // 过滤出符合条件的那个闭合多边形
-    const targetBand = isobands.features.find(f => f.properties?.time === '0-300' || f.properties?.time === `0-${targetSec}`);
+    let targetBand = isobands.features.find(f => f.properties?.time === '0-300' || f.properties?.time === `0-${targetSec}`);
     
-    return targetBand || isobands.features[0];
+    if (!targetBand && isobands.features.length > 0) {
+      targetBand = isobands.features[0];
+    }
+
+    // --- 算法优化：消除空心 (Remove Internal Holes) ---
+    //Isochrones 往往包含内部环（空腔），在展示覆盖范围时通常需要将其“实心化”
+    if (targetBand && targetBand.geometry) {
+      const geom = targetBand.geometry as any;
+      if (geom.type === 'Polygon') {
+        // 多边形结构为 [外轮廓, 孔洞1, 孔洞2...]，我们只保留第一个元素（外轮廓）
+        geom.coordinates = [geom.coordinates[0]];
+      } else if (geom.type === 'MultiPolygon') {
+        // 对多面体中的每个多边形执行相同的“去孔”操作
+        geom.coordinates = geom.coordinates.map((poly: any) => [poly[0]]);
+      }
+    }
+    
+    return targetBand;
   };
 
   // 核心逻辑：执行所有站点的可达性分析
@@ -529,6 +561,52 @@ export default function App() {
                 {/* 标定样本上传区 */}
                 <section className="space-y-4">
                   <div className="text-sm font-bold text-slate-700">1. 上传实测样本</div>
+                  
+                  {/* 标定坐标系选择 */}
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+                        <Scan className="w-3 h-3" />
+                        样本表坐标系
+                      </div>
+                      <span className="text-red-600 font-bold text-xs">{calibrationCoordSystem}</span>
+                    </div>
+                    <div className="flex p-1 bg-slate-100 rounded-lg">
+                      {(['GCJ-02', 'BD-09', 'WGS-84'] as const).map(sys => (
+                        <button
+                          key={sys}
+                          onClick={() => setCalibrationCoordSystem(sys)}
+                          className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${
+                            calibrationCoordSystem === sys ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          {sys}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 数据说明与表头参考 */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                    <p className="text-[11px] text-slate-600 font-medium">
+                      校验表必须包含以下列名（支持 Excel 或 CSV）：
+                    </p>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {[
+                        { h: 'stationLng', d: '消防站经度' },
+                        { h: 'stationLat', d: '消防站纬度' },
+                        { h: 'incidentLng', d: '火警点经度' },
+                        { h: 'incidentLat', d: '火警点纬度' },
+                        { h: 'actualTotalTime', d: '实际总耗时(秒)' },
+                      ].map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm">
+                          <code className="text-[10px] font-bold text-red-600">{item.h}</code>
+                          <span className="text-[10px] text-slate-400">{item.d}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="relative group">
                     <input 
                       type="file" 
@@ -565,7 +643,6 @@ export default function App() {
                     {isCalibrating ? '拟合计算中...' : '开始自动生成标定参数'}
                   </button>
 
-                  {/* 标定结果展示卡片 */}
                   {calibrationResult && (
                     <motion.div 
                       initial={{ opacity: 0, y: 10 }}
@@ -583,9 +660,27 @@ export default function App() {
                           <div className="text-xl font-black text-red-700">{calibrationResult.recommendedEntrySpeed}m/s</div>
                         </div>
                       </div>
-                      <p className="text-[10px] text-slate-500 text-center leading-relaxed">
-                        基于 {calibrationResult.sampleCount} 个样本拟合，平均误差仅 {calibrationResult.averageErrorSeconds} 秒。
-                      </p>
+                      
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+                          基于 {calibrationResult.sampleCount} 个有效样本，平均误差 <span className={`font-bold ${calibrationResult.averageErrorSeconds > 60 ? 'text-orange-500' : 'text-green-600'}`}>{calibrationResult.averageErrorSeconds}</span> 秒。
+                        </p>
+                        {calibrationResult.trimmedCount > 0 && (
+                          <p className="text-[9px] text-slate-400 text-center">
+                            (模型已自动剔除 {calibrationResult.trimmedCount} 个极大离群点以优化拟合度)
+                          </p>
+                        )}
+                      </div>
+
+                      {calibrationResult.averageErrorSeconds > 120 && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex gap-2 items-start">
+                          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div className="text-[10px] text-amber-700 leading-normal">
+                            <b>误差较大建议：</b> 平均误差超过 2 分钟，建议检查样本表格中的坐标系是否选对（WGS84?），或剔除掉交通极端拥堵、出警记录异常的散点。
+                          </div>
+                        </div>
+                      )}
+
                       <button 
                         onClick={() => setSidebarTab('analyze')}
                         className="w-full py-2 bg-red-600 text-white text-[10px] font-bold rounded-lg hover:bg-red-700 transition-all uppercase tracking-widest"
@@ -594,7 +689,21 @@ export default function App() {
                       </button>
                     </motion.div>
                   )}
+
+                  {/* 标定优化建议指南 */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                      <Info className="w-3.5 h-3.5 text-slate-400" />
+                      标定质量优化指南
+                    </div>
+                    <ul className="text-[10px] text-slate-500 space-y-2 list-disc pl-3 leading-relaxed">
+                      <li><b>剔除离群值：</b> 排除发生车祸、极端天气、非典型时段（如深夜或早高峰）的异常出警样本。</li>
+                      <li><b>坐标统一：</b> 确保实测表中的 <code>stationLng/Lat</code> 等坐标系与当前选择的【样本表坐标系】严格一致。</li>
+                      <li><b>样本分布：</b> 尽量均匀涵盖近距离（0.5km）和远距离（5km+）的样本，避免数据集中在某个半径。</li>
+                    </ul>
+                  </div>
                 </section>
+
               </div>
             )}
           </div>
@@ -704,11 +813,12 @@ export default function App() {
                   <GeoJSON 
                     data={res.geometry} 
                     style={{
-                      fillColor: '#ef4444', // 填充浅红色
-                      fillOpacity: 0.3,    // 30% 透明度
-                      color: '#b91c1c',     // 边框深红色
-                      weight: 2,           // 边框粗细
-                      dashArray: '4'       // 虚线边框
+                      fillColor: '#ef4444', // 填充红色
+                      fillOpacity: 0.35,   // 稍微提高透明度增强对比
+                      color: '#b91c1c',     // 边框深红
+                      weight: 3,           // 加粗边框
+                      lineJoin: 'round',    // 圆角连接
+                      opacity: 0.8          // 边框不透明度
                     }} 
                   />
                 </React.Fragment>

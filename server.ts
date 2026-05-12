@@ -145,59 +145,41 @@ app.post('/api/analyze', async (req, res) => {
     const aroundUrl = 'https://restapi.amap.com/v3/place/around'; // 指定向高德“周边搜索”数据接口发请求的地址
     const anchors: string[] = []; // 初始化一个空的“锚点库”，我们将收集成百上千个潜在的灭火目的地坐标
     
-    // A.1 中心点向外深度全量扫描：为了构建极精细的边界，我们深度抓取 10 个数据页共 500 个活跃地理点位
-    for (let page = 1; page <= 10; page++) {
-      const currentKey = apiKeys[(page - 1) % apiKeys.length]; // 密钥轮换策略：让所有秘钥均匀分摊查询压力
+    // A.1 中心点深度扫描：抓取前 15 页数据（约 750 个真实点位），构建全量覆盖样本库
+    for (let page = 1; page <= 15; page++) {
+      const currentKey = apiKeys[(page - 1) % apiKeys.length];
       try {
         const aroundRes = await axios.get(aroundUrl, {
           params: {
-            key: currentKey, // 钥匙
-            location: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`, // 格式化中心点坐标
-            radius: radius, // 搜索半径
-            offset: 50, // 贪心获取：每页请求 50 个点，这是官方允许的最大值
-            page: page // 任务卡上对应的当前页码
+            key: currentKey,
+            location: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`,
+            radius: radius,
+            offset: 50,
+            page: page
           }
         });
-        // 验证这次网络请求是否真的拿到了有用的位置信息
         if (aroundRes.data.status === '1' && aroundRes.data.pois) {
-          aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 提取经纬坐标字符串，收录入库
-          if (aroundRes.data.pois.length < 50) break; // 如果还没拿满一整页，说明周围点已淘尽，提前结束循环
+          aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location));
+          if (aroundRes.data.pois.length < 50) break;
         } else {
-          break; // 若接口报错（如频率受限），则放弃本页及后续页码
+          break;
         }
-      } catch (e) { break; } // 超时时跳过该分支
+      } catch (e) { break; }
     }
 
-    // A.2 空间几何补盲探测：在罗盘的 8 个主要罗盘方位上，通过三维向量模拟出潜在的地理边界点
-    const radialPromises: Promise<void>[] = []; // 创建 Promise 任务队列，用于并发处理多个方位的补盲任务
-    for (let angle = 0; angle < 360; angle += 45) { // 遍历 0°, 45°, 90°... 直到 315° 共 8 个核心方向
-      for (const distStep of [0.5, 1.0, 1.3]) { // 分别在半径路径的半程、全程及外溢区建立虚拟采样哨站
-        const rad = (angle * Math.PI) / 180; // 方向角转为计算所需的弧度制
-        // 基于地球物理常数和局部纬度缩放，通过投影推算出远端模拟点位的高德坐标
+    // A.2 几何补盲（极速模式）：通过数学计算注入 24 个方向锚点，作为无建筑区域的保底逻辑
+    for (let angle = 0; angle < 360; angle += 45) { 
+      for (const distStep of [0.5, 1.0, 1.3]) { 
+        const rad = (angle * Math.PI) / 180;
         const g_lng = gcjLng + (radius * distStep * Math.cos(rad)) / (111320 * Math.cos((gcjLat * Math.PI) / 180));
         const g_lat = gcjLat + (radius * distStep * Math.sin(rad)) / 111320;
         
-        const radialPoint = `${g_lng.toFixed(6)},${g_lat.toFixed(6)}`; // 组装坐标字符串格式
-        anchors.push(radialPoint); // 将纯几何模拟出的点也纳入名单，保障在无人荒野地区也能模拟出路径
-
-        // 针对每个射出的径向模拟点，再次深度探测它周围 800 米的真实地标点，极大地修复路网边缘的毛刺感
-        radialPromises.push((async () => {
-          try {
-            const currentKey = apiKeys[Math.floor(Math.random() * apiKeys.length)]; // 随机抽签选一把钥匙
-            const res = await axios.get(aroundUrl, { 
-              params: { key: currentKey, location: radialPoint, radius: 800, offset: 20, page: 1 }
-            });
-            if (res.data.status === '1' && res.data.pois) {
-              res.data.pois.forEach((poi: any) => anchors.push(poi.location)); // 将新发现的点位也收编进库
-            }
-          } catch (e) {}
-        })());
+        anchors.push(`${g_lng.toFixed(6)},${g_lat.toFixed(6)}`); 
       }
     }
-    await Promise.all(radialPromises); // 阻塞式集火等待，直到所有异步探测任务完成后再往下走
 
-    // 锚点收割与去重：将全量收集到的数千点通过集合去重（踢掉坐标重复的），截取前 200 个最具分析价值的点发起路径规划
-    const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 200); 
+    // 锚点收割与去重：对全量获取到的点位发起路径规划，不再限制为 200 个
+    const uniqueAnchors = Array.from(new Set(anchors)); 
     const trailPoints: [number, number, number][] = []; // 核心成果桶：存放每一个轨迹细节 [WGS84经, WGS84纬, 累计耗时]
     const routeUrl = 'https://restapi.amap.com/v3/direction/driving'; // 指向高德最核心的驾车模拟（路径规划）引擎地址
 
@@ -347,21 +329,38 @@ app.post('/api/calibrate', async (req, res) => {
       }
     }
 
-    // 2. 网格搜索寻找最优解 (Grid Search)
+    // 2. 网格搜索寻找最优解 (Grid Search + Outlier Trimming)
+    if (results.length === 0) {
+      return res.json({
+        recommendedFactor: 0.8,
+        recommendedEntrySpeed: 3.0,
+        averageErrorSeconds: 0,
+        sampleCount: 0,
+        message: '没有样本成功获取到路网路径，请检查 API Key 或坐标位置'
+      });
+    }
+
     let bestFactor = 0.8;
     let bestEntrySpeed = 3.0;
     let minError = Infinity;
 
-    // 遍历 factor (0.5 - 1.2) 和 entrySpeed (1 - 10)
-    for (let f = 0.5; f <= 1.2; f += 0.05) {
-      for (let s = 1.0; s <= 10.0; s += 0.5) {
-        let totalError = 0;
-        results.forEach(res => {
-          const simTime = (res.rawRoadTime * f) + (res.gapDist / s);
-          totalError += Math.abs(simTime - res.actualTotalTime);
+    // 遍历 factor (0.4 - 1.4) 和 entrySpeed (0.5 - 15)
+    for (let f = 0.4; f <= 1.4; f += 0.02) {
+      for (let s = 0.5; s <= 15.0; s += 0.5) {
+        // 计算每个样本在该参数下的误差
+        const errors = results.map(item => {
+          const simTime = (item.rawRoadTime * f) + (item.gapDist / s);
+          return Math.abs(simTime - item.actualTotalTime);
         });
+
+        // --- 核心优化：鲁棒性拟合 (Robust Fitting) ---
+        // 排序误差并剔除最极端的 20% 样本（防止偏离巨大的“脏数据”带偏整个模型）
+        errors.sort((a, b) => a - b);
+        const keepCount = Math.max(1, Math.floor(errors.length * 0.8));
+        const trimmedErrors = errors.slice(0, keepCount);
         
-        const avgError = totalError / results.length;
+        const avgError = trimmedErrors.reduce((sum, e) => sum + e, 0) / keepCount;
+
         if (avgError < minError) {
           minError = avgError;
           bestFactor = f;
@@ -374,7 +373,8 @@ app.post('/api/calibrate', async (req, res) => {
       recommendedFactor: Number(bestFactor.toFixed(2)),
       recommendedEntrySpeed: Number(bestEntrySpeed.toFixed(2)),
       averageErrorSeconds: Number(minError.toFixed(2)),
-      sampleCount: results.length
+      sampleCount: results.length,
+      trimmedCount: Math.floor(results.length * 0.2)
     });
 
   } catch (error: any) {
