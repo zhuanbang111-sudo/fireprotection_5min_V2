@@ -31,7 +31,17 @@ import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { initializeApp } from 'firebase/app';
-import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, User } from 'firebase/auth';
+import { 
+  getAuth, 
+  onAuthStateChanged, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  User,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile
+} from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // --- Firebase 初始化 ---
@@ -91,6 +101,12 @@ export default function App() {
   // --- 权限相关状态 ---
   const [user, setUser] = useState<User | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -125,12 +141,39 @@ export default function App() {
   }, []);
 
   // --- 登录/登出处理 ---
-  const handleLogin = async () => {
+  const handleGoogleLogin = async () => {
+    setAuthError('');
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-      console.error('Login failed:', error);
-      alert('登录失败，请重试');
+    } catch (error: any) {
+      setAuthError('Google 登录失败，请重试');
+    }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsLoading(true);
+
+    try {
+      if (isRegistering) {
+        // 注册流程
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
+        addLog(`新用户注册成功: ${email}`);
+      } else {
+        // 登录流程
+        await signInWithEmailAndPassword(auth, email, password);
+        addLog(`用户登录成功: ${email}`);
+      }
+    } catch (error: any) {
+      console.error('Auth error:', error.code);
+      if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
+      else if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') setAuthError('邮箱或密码错误');
+      else if (error.code === 'auth/weak-password') setAuthError('密码强度不足（至少6位）');
+      else setAuthError('认证失败，请检查输入或网络');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -159,7 +202,7 @@ export default function App() {
         animate={{ opacity: 1, y: 0 }}
         className="relative z-10 w-full max-w-md"
       >
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl space-y-8">
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl space-y-6">
           <div className="text-center space-y-2">
             <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-600/30">
               <MapIcon className="w-8 h-8 text-white" />
@@ -167,26 +210,98 @@ export default function App() {
             <h1 className="text-2xl font-black text-white tracking-tight mt-4">
               FireIsochrone <span className="text-red-500">Pro V2</span>
             </h1>
-            <p className="text-slate-400 text-sm font-medium">消防站点 5 分钟等时圈分析专家系统</p>
+            <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
+              {isRegistering ? '创建您的分析账户' : '消防仿真系统登录'}
+            </p>
           </div>
 
-          <div className="space-y-4">
+          <form onSubmit={handleEmailAuth} className="space-y-4">
+            {isRegistering && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
+                <input 
+                  type="text" 
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="您的姓名或部门"
+                  required={isRegistering}
+                  className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+                />
+              </div>
+            )}
+            
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
+              <input 
+                type="email" 
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="email@example.com"
+                required
+                className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
+              <input 
+                type="password" 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
+              />
+            </div>
+
+            {authError && (
+              <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-2 rounded-lg">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {authError}
+              </div>
+            )}
+
             <button
-              onClick={handleLogin}
-              className="w-full h-14 bg-white hover:bg-slate-100 text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-3 transition-all active:scale-95 shadow-lg"
+              type="submit"
+              disabled={isLoading}
+              className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/20"
             >
-              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-              使用 Google 账号登录
+              {isLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : (isRegistering ? '注册并进入系统' : '立即登录')}
             </button>
-            <p className="text-[10px] text-slate-500 text-center px-6 leading-relaxed">
-              受限制的访问权限：该系统仅供授权用户进行消防仿真分析与规划实操。
-            </p>
+          </form>
+
+          <div className="relative flex items-center py-2">
+            <div className="flex-grow border-t border-white/10"></div>
+            <span className="flex-shrink mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter">或者使用</span>
+            <div className="flex-grow border-t border-white/10"></div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            className="w-full h-12 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-medium rounded-xl flex items-center justify-center gap-3 transition-all"
+          >
+            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
+            <span className="text-sm">Google 账号登录</span>
+          </button>
+
+          <div className="text-center">
+            <button 
+              type="button"
+              onClick={() => {
+                setIsRegistering(!isRegistering);
+                setAuthError('');
+              }}
+              className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
+            >
+              {isRegistering ? '已经有账号了？ 立即登录' : '没有账号？ 免费注册'}
+            </button>
           </div>
         </div>
 
         <div className="mt-8 text-center">
-          <p className="text-slate-600 text-[11px] font-medium tracking-widest uppercase">
-            Designed for Emergency Services
+          <p className="text-slate-600 text-[10px] font-bold tracking-widest uppercase opacity-50">
+            Emergency Services Analytics Platform
           </p>
         </div>
       </motion.div>
