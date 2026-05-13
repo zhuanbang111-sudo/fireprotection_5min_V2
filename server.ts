@@ -281,7 +281,7 @@ app.post('/api/verify-recaptcha', async (req, res) => {
   const { token, isTestEnv } = req.body;
   
   // 如果是测试环境，使用 Google 官方提供的无需域名校验的测试密钥
-  // 否则使用环境变量中的私钥（或硬核默认值）
+  // 这里同步前端逻辑：只要不是生产主域名，就视为测试环境以保证可用性
   const secretKey = isTestEnv 
     ? '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe' 
     : (process.env.RECAPTCHA_SECRET_KEY || '6LdCiOcsAAAAAJonYvw5CWrx6bXNNHjjgco58h9k');

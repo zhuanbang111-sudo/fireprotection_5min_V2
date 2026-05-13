@@ -182,9 +182,11 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 检查当前是否在 AI Studio 预览环境（域名动态变化且未授权）
-      const isAISPreview = window.location.hostname.includes('ais-dev') || 
+      // 检查当前是否在 AI Studio 预览环境或 Cloud Run 环境
+      const isAISPreview = !window.location.hostname.includes('urbancopilotfire.cc.cd') || 
+                          window.location.hostname.includes('ais-dev') || 
                           window.location.hostname.includes('ais-pre') ||
+                          window.location.hostname.includes('run.app') ||
                           window.location.hostname.includes('googleusercontent.com');
 
       // 验证 reCAPTCHA 令牌
@@ -320,10 +322,12 @@ export default function App() {
                 <ReCAPTCHA
                   ref={recaptchaRef}
                   sitekey={
-                    (window.location.hostname.includes('ais-dev') || 
+                    (!window.location.hostname.includes('urbancopilotfire.cc.cd') ||
+                     window.location.hostname.includes('ais-dev') || 
                      window.location.hostname.includes('ais-pre') ||
+                     window.location.hostname.includes('run.app') ||
                      window.location.hostname.includes('googleusercontent.com'))
-                    ? '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI' // reCAPTCHA v2 Test Site Key
+                    ? '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI' // reCAPTCHA v2 Test Site Key (Works on everything)
                     : (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LdCiOcsAAAAAINmU4CIODqPwWidlWPJtpAGjS9N')
                   }
                   onChange={(token) => setRecaptchaToken(token)}
