@@ -133,20 +133,50 @@ export default function App() {
 
   // --- 监听 Auth 变化 ---
   useEffect(() => {
+    console.log('[Auth] Initializing observer...');
+    
+    // 超时兜底：防止在某些网络或域名配置错误下，Auth 监听器长时间不响应导致白屏
+    const timer = setTimeout(() => {
+      if (isAuthChecking) {
+        console.warn('[Auth] Auth check timed out. Forcing ready state.');
+        setIsAuthChecking(false);
+      }
+    }, 5000);
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log('[Auth] State changed:', currentUser ? 'User Logged In' : 'No User');
       setUser(currentUser);
       setIsAuthChecking(false);
+      clearTimeout(timer);
+    }, (error) => {
+      console.error('[Auth] Observer error:', error);
+      setIsAuthChecking(false);
+      setAuthError(`系统认证模块初始化异常: ${error.message}`);
+      clearTimeout(timer);
     });
-    return () => unsubscribe();
-  }, []);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+    };
+  }, [isAuthChecking]);
 
   // --- 登录/登出处理 ---
   const handleGoogleLogin = async () => {
     setAuthError('');
     try {
-      await signInWithPopup(auth, googleProvider);
+      console.log('[Auth] Starting Google Popup login...');
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log('[Auth] Login success:', result.user.email);
+      setUser(result.user); // 显式同步一次状态，确保界面能即时响应
     } catch (error: any) {
-      setAuthError('Google 登录失败，请重试');
+      console.error('[Auth] Google Login error:', error);
+      if (error.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        setAuthError(`域名未授权：请在 Firebase 控制台的 Auth -> Settings -> Authorized domains 中手动添加 "${domain}"。`);
+      } else {
+        setAuthError(`登录失败: ${error.message}`);
+      }
     }
   };
 
@@ -154,24 +184,23 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     setIsLoading(true);
+    console.log('[Auth] Starting Email auth...', isRegistering ? 'Register' : 'Login');
 
     try {
       if (isRegistering) {
-        // 注册流程
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
-        addLog(`新用户注册成功: ${email}`);
+        console.log('[Auth] Register success');
       } else {
-        // 登录流程
         await signInWithEmailAndPassword(auth, email, password);
-        addLog(`用户登录成功: ${email}`);
+        console.log('[Auth] Login success');
       }
     } catch (error: any) {
-      console.error('Auth error:', error.code);
+      console.error('[Auth] Email auth error:', error.code);
       if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
-      else if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') setAuthError('邮箱或密码错误');
-      else if (error.code === 'auth/weak-password') setAuthError('密码强度不足（至少6位）');
-      else setAuthError('认证失败，请检查输入或网络');
+      else if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
+      else if (error.code === 'auth/weak-password') setAuthError('密码过短（至少6位）');
+      else setAuthError(`认证失败: ${error.code}`);
     } finally {
       setIsLoading(false);
     }
@@ -317,8 +346,26 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginView />;
+    return (
+      <LoginView 
+        isRegistering={isRegistering}
+        setIsRegistering={setIsRegistering}
+        handleEmailAuth={handleEmailAuth}
+        handleGoogleLogin={handleGoogleLogin}
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        displayName={displayName}
+        setDisplayName={setDisplayName}
+        authError={authError}
+        setAuthError={setAuthError}
+        isLoading={isLoading}
+      />
+    );
   }
+
+  console.log('[App] Rendering main dashboard for:', user.email);
 
   // 处理 Excel/CSV 文件的通用上传函数
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'station' | 'calibration' = 'station') => {
@@ -604,11 +651,11 @@ export default function App() {
           
           {/* 用户信息与退出 */}
           <div className="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200 shadow-inner">
-            {user.photoURL && (
+            {user?.photoURL && (
               <img src={user.photoURL} alt={user.displayName || ''} className="w-6 h-6 rounded-full border border-slate-300" />
             )}
             <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-700 leading-none">{user.displayName}</span>
+              <span className="text-[10px] font-black text-slate-700 leading-none">{user?.displayName || user?.email}</span>
               <button 
                 onClick={handleLogout}
                 className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter"
