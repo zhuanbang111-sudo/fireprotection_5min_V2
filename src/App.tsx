@@ -30,7 +30,6 @@ import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
-import ReCAPTCHA from 'react-google-recaptcha'; // 导入 reCAPTCHA 组件
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -108,8 +107,6 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
-  const recaptchaRef = useRef<ReCAPTCHA>(null);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -174,27 +171,9 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     
-    if (!recaptchaToken) {
-      setAuthError('请先完成人机身份验证');
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-      // 核心安全逻辑：非正式生产域名均视为测试环境
-      const isProdDomain = window.location.hostname === 'urbancopilotfire.cc.cd';
-      const isTestEnv = !isProdDomain;
-
-      // 验证 reCAPTCHA 令牌
-      const verifyRes = await axios.post('/api/verify-recaptcha', { 
-        token: recaptchaToken,
-        isTestEnv: isTestEnv
-      });
-      if (!verifyRes.data.success) {
-        throw new Error('reCAPTCHA 验证失败');
-      }
-
       if (isRegistering) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
@@ -206,10 +185,6 @@ export default function App() {
       if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
       else if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
       else setAuthError(`认证失败: ${error.message || error.code || '未知错误'}`);
-      
-      // 认证失败时重置 reCAPTCHA
-      setRecaptchaToken(null);
-      recaptchaRef.current?.reset();
     } finally {
       setIsLoading(false);
     }
@@ -314,40 +289,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* reCAPTCHA Widget */}
-              <div className="flex justify-center py-3 bg-white/5 rounded-xl border border-white/10 mb-4 overflow-hidden">
-                {(() => {
-                  // 绝对修复逻辑：在所有已知预览域名下强制使用测试密钥
-                  const hostname = window.location.hostname;
-                  const isPreview = hostname.includes('run.app') || 
-                                   hostname.includes('googleusercontent.com') || 
-                                   hostname.includes('localhost') ||
-                                   !hostname.includes('.'); // 处理某些内网环境
-                  
-                  const testSiteKey = '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI';
-                  const prodSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
-                  
-                  // 只有在非预览环境且配置了生产 Key 时才使用它，否则一律强制测试 Key 确保可用
-                  const finalSiteKey = (!isPreview && prodSiteKey) ? prodSiteKey : testSiteKey;
-
-                  if (process.env.NODE_ENV !== 'production') {
-                    console.log(`[reCAPTCHA] Active Host: ${hostname}, Using Key: ${finalSiteKey.substring(0, 8)}... (Mode: ${isPreview ? 'FORCE_TEST' : 'PRODUCTION'})`);
-                  }
-                  
-                  return (
-                    <div className="scale-[0.85] md:scale-90 origin-center">
-                      <ReCAPTCHA
-                        key={finalSiteKey} 
-                        ref={recaptchaRef}
-                        sitekey={finalSiteKey}
-                        onChange={(token) => setRecaptchaToken(token)}
-                        theme="dark"
-                      />
-                    </div>
-                  );
-                })()}
-              </div>
-
               <button
                 type="submit"
                 disabled={isLoading}
@@ -378,8 +319,6 @@ export default function App() {
                 onClick={() => {
                   setIsRegistering(!isRegistering);
                   setAuthError('');
-                  setRecaptchaToken(null);
-                  recaptchaRef.current?.reset();
                 }}
                 className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
               >

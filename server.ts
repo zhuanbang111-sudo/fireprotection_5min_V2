@@ -275,49 +275,6 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 /**
- * ---【系统安全】Google reCAPTCHA v2 验证接口 ---
- */
-app.post('/api/verify-recaptcha', async (req, res) => {
-  const { token, isTestEnv } = req.body;
-  
-  // Google 官方测试私钥 (无需域名校验)
-  const GOOGLE_TEST_SECRET = '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe';
-  
-  // 逻辑：如果是测试环境请求，强制使用测试私钥
-  // 否则尝试使用环境变量中的私钥
-  const secretKey = isTestEnv 
-    ? GOOGLE_TEST_SECRET 
-    : (process.env.RECAPTCHA_SECRET_KEY || GOOGLE_TEST_SECRET);
-
-  if (!token) {
-    return res.status(400).json({ success: false, message: 'Missing reCAPTCHA token' });
-  }
-
-  try {
-    const response = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify`,
-      null,
-      {
-        params: {
-          secret: secretKey,
-          response: token
-        }
-      }
-    );
-
-    if (response.data.success) {
-      res.json({ success: true });
-    } else {
-      console.warn('[reCAPTCHA] Validation failed:', response.data['error-codes']);
-      res.status(400).json({ success: false, message: 'Verification failed' });
-    }
-  } catch (error: any) {
-    console.error('[reCAPTCHA] Server error:', error.message);
-    res.status(500).json({ success: false, message: 'Internal server error during verification' });
-  }
-});
-
-/**
  * ---【模型校验拟合器】核心算法 ---
  * app.post 定义了一个接口 '/api/calibrate'，用于根据历史实测数据自动寻找最优参数。
  */
