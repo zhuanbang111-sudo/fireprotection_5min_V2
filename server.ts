@@ -280,11 +280,14 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/verify-recaptcha', async (req, res) => {
   const { token, isTestEnv } = req.body;
   
-  // 如果是测试环境，使用 Google 官方提供的无需域名校验的测试密钥
-  // 这里同步前端逻辑：只要不是生产主域名，就视为测试环境以保证可用性
+  // Google 官方测试私钥 (无需域名校验)
+  const GOOGLE_TEST_SECRET = '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe';
+  
+  // 逻辑：如果是测试环境请求，强制使用测试私钥
+  // 否则尝试使用环境变量中的私钥
   const secretKey = isTestEnv 
-    ? '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe' 
-    : (process.env.RECAPTCHA_SECRET_KEY || '6LdCiOcsAAAAAJonYvw5CWrx6bXNNHjjgco58h9k');
+    ? GOOGLE_TEST_SECRET 
+    : (process.env.RECAPTCHA_SECRET_KEY || GOOGLE_TEST_SECRET);
 
   if (!token) {
     return res.status(400).json({ success: false, message: 'Missing reCAPTCHA token' });

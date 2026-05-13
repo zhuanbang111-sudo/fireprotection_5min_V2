@@ -182,8 +182,8 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 检查当前环境是否需要使用测试密钥（非生产域名均视为测试环境）
-      const isProdDomain = window.location.hostname.includes('urbancopilotfire.cc.cd');
+      // 核心安全逻辑：非正式生产域名均视为测试环境
+      const isProdDomain = window.location.hostname === 'urbancopilotfire.cc.cd';
       const isTestEnv = !isProdDomain;
 
       // 验证 reCAPTCHA 令牌
@@ -315,21 +315,35 @@ export default function App() {
               )}
 
               {/* reCAPTCHA Widget */}
-              <div className="flex justify-center py-2">
+              <div className="flex justify-center py-3 bg-white/5 rounded-xl border border-white/10 mb-4 overflow-hidden">
                 {(() => {
-                  const isProdDomain = window.location.hostname.includes('urbancopilotfire.cc.cd');
+                  // 绝对修复逻辑：在所有已知预览域名下强制使用测试密钥
+                  const hostname = window.location.hostname;
+                  const isPreview = hostname.includes('run.app') || 
+                                   hostname.includes('googleusercontent.com') || 
+                                   hostname.includes('localhost') ||
+                                   !hostname.includes('.'); // 处理某些内网环境
+                  
                   const testSiteKey = '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI';
-                  const prodSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LdCiOcsAAAAAINmU4CIODqPwWidlWPJtpAGjS9N';
-                  const finalSiteKey = isProdDomain ? prodSiteKey : testSiteKey;
+                  const prodSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
+                  
+                  // 只有在非预览环境且配置了生产 Key 时才使用它，否则一律强制测试 Key 确保可用
+                  const finalSiteKey = (!isPreview && prodSiteKey) ? prodSiteKey : testSiteKey;
+
+                  if (process.env.NODE_ENV !== 'production') {
+                    console.log(`[reCAPTCHA] Active Host: ${hostname}, Using Key: ${finalSiteKey.substring(0, 8)}... (Mode: ${isPreview ? 'FORCE_TEST' : 'PRODUCTION'})`);
+                  }
                   
                   return (
-                    <ReCAPTCHA
-                      key={finalSiteKey} // 重要：密钥更换时强制重载组件
-                      ref={recaptchaRef}
-                      sitekey={finalSiteKey}
-                      onChange={(token) => setRecaptchaToken(token)}
-                      theme="dark"
-                    />
+                    <div className="scale-[0.85] md:scale-90 origin-center">
+                      <ReCAPTCHA
+                        key={finalSiteKey} 
+                        ref={recaptchaRef}
+                        sitekey={finalSiteKey}
+                        onChange={(token) => setRecaptchaToken(token)}
+                        theme="dark"
+                      />
+                    </div>
                   );
                 })()}
               </div>
