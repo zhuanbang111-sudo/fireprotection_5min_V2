@@ -182,17 +182,14 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 检查当前是否在 AI Studio 预览环境或 Cloud Run 环境
-      const isAISPreview = !window.location.hostname.includes('urbancopilotfire.cc.cd') || 
-                          window.location.hostname.includes('ais-dev') || 
-                          window.location.hostname.includes('ais-pre') ||
-                          window.location.hostname.includes('run.app') ||
-                          window.location.hostname.includes('googleusercontent.com');
+      // 检查当前环境是否需要使用测试密钥（非生产域名均视为测试环境）
+      const isProdDomain = window.location.hostname.includes('urbancopilotfire.cc.cd');
+      const isTestEnv = !isProdDomain;
 
       // 验证 reCAPTCHA 令牌
       const verifyRes = await axios.post('/api/verify-recaptcha', { 
         token: recaptchaToken,
-        isTestEnv: isAISPreview
+        isTestEnv: isTestEnv
       });
       if (!verifyRes.data.success) {
         throw new Error('reCAPTCHA 验证失败');
@@ -319,20 +316,22 @@ export default function App() {
 
               {/* reCAPTCHA Widget */}
               <div className="flex justify-center py-2">
-                <ReCAPTCHA
-                  ref={recaptchaRef}
-                  sitekey={
-                    (!window.location.hostname.includes('urbancopilotfire.cc.cd') ||
-                     window.location.hostname.includes('ais-dev') || 
-                     window.location.hostname.includes('ais-pre') ||
-                     window.location.hostname.includes('run.app') ||
-                     window.location.hostname.includes('googleusercontent.com'))
-                    ? '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI' // reCAPTCHA v2 Test Site Key (Works on everything)
-                    : (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LdCiOcsAAAAAINmU4CIODqPwWidlWPJtpAGjS9N')
-                  }
-                  onChange={(token) => setRecaptchaToken(token)}
-                  theme="dark"
-                />
+                {(() => {
+                  const isProdDomain = window.location.hostname.includes('urbancopilotfire.cc.cd');
+                  const testSiteKey = '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI';
+                  const prodSiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LdCiOcsAAAAAINmU4CIODqPwWidlWPJtpAGjS9N';
+                  const finalSiteKey = isProdDomain ? prodSiteKey : testSiteKey;
+                  
+                  return (
+                    <ReCAPTCHA
+                      key={finalSiteKey} // 重要：密钥更换时强制重载组件
+                      ref={recaptchaRef}
+                      sitekey={finalSiteKey}
+                      onChange={(token) => setRecaptchaToken(token)}
+                      theme="dark"
+                    />
+                  );
+                })()}
               </div>
 
               <button
