@@ -133,25 +133,18 @@ export default function App() {
 
   // --- 监听 Auth 变化 ---
   useEffect(() => {
-    console.log('[Auth] Initializing observer...');
-    
-    // 超时兜底：防止在某些网络或域名配置错误下，Auth 监听器长时间不响应导致白屏
     const timer = setTimeout(() => {
       if (isAuthChecking) {
-        console.warn('[Auth] Auth check timed out. Forcing ready state.');
         setIsAuthChecking(false);
       }
-    }, 5000);
+    }, 8000);
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      console.log('[Auth] State changed:', currentUser ? 'User Logged In' : 'No User');
       setUser(currentUser);
       setIsAuthChecking(false);
       clearTimeout(timer);
-    }, (error) => {
-      console.error('[Auth] Observer error:', error);
+    }, () => {
       setIsAuthChecking(false);
-      setAuthError(`系统认证模块初始化异常: ${error.message}`);
       clearTimeout(timer);
     });
 
@@ -159,21 +152,15 @@ export default function App() {
       unsubscribe();
       clearTimeout(timer);
     };
-  }, [isAuthChecking]);
+  }, []); // Remove isAuthChecking from dependency to prevent loop
 
-  // --- 登录/登出处理 ---
   const handleGoogleLogin = async () => {
     setAuthError('');
     try {
-      console.log('[Auth] Starting Google Popup login...');
-      const result = await signInWithPopup(auth, googleProvider);
-      console.log('[Auth] Login success:', result.user.email);
-      setUser(result.user); // 显式同步一次状态，确保界面能即时响应
+      await signInWithPopup(auth, googleProvider);
     } catch (error: any) {
-      console.error('[Auth] Google Login error:', error);
       if (error.code === 'auth/unauthorized-domain') {
-        const domain = window.location.hostname;
-        setAuthError(`域名未授权：请在 Firebase 控制台的 Auth -> Settings -> Authorized domains 中手动添加 "${domain}"。`);
+        setAuthError(`域名未授权：请在 Firebase 控制台添加 "${window.location.hostname}"。`);
       } else {
         setAuthError(`登录失败: ${error.message}`);
       }
@@ -184,22 +171,17 @@ export default function App() {
     e.preventDefault();
     setAuthError('');
     setIsLoading(true);
-    console.log('[Auth] Starting Email auth...', isRegistering ? 'Register' : 'Login');
 
     try {
       if (isRegistering) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
-        console.log('[Auth] Register success');
       } else {
         await signInWithEmailAndPassword(auth, email, password);
-        console.log('[Auth] Login success');
       }
     } catch (error: any) {
-      console.error('[Auth] Email auth error:', error.code);
       if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
       else if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
-      else if (error.code === 'auth/weak-password') setAuthError('密码过短（至少6位）');
       else setAuthError(`认证失败: ${error.code}`);
     } finally {
       setIsLoading(false);
@@ -211,131 +193,18 @@ export default function App() {
       await signOut(auth);
       setResults([]);
       setStations([]);
-      addLog('已登出系统');
     } catch (error) {
       console.error('Logout failed:', error);
     }
   };
 
-  // --- 登录页面组件 ---
-  const LoginView = () => (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
-      {/* 背景装饰轨迹 */}
-      <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-        <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-red-600 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600 rounded-full blur-[120px]" />
-      </div>
-
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative z-10 w-full max-w-md"
-      >
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-600/30">
-              <MapIcon className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-black text-white tracking-tight mt-4">
-              FireIsochrone <span className="text-red-500">Pro V2</span>
-            </h1>
-            <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
-              {isRegistering ? '创建您的分析账户' : '消防仿真系统登录'}
-            </p>
-          </div>
-
-          <form onSubmit={handleEmailAuth} className="space-y-4">
-            {isRegistering && (
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
-                <input 
-                  type="text" 
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="您的姓名或部门"
-                  required={isRegistering}
-                  className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
-                />
-              </div>
-            )}
-            
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
-              <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="email@example.com"
-                required
-                className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
-              <input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                className="w-full h-12 bg-white/10 border border-white/10 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500/50 transition-all"
-              />
-            </div>
-
-            {authError && (
-              <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-2 rounded-lg">
-                <AlertCircle className="w-3.5 h-3.5" />
-                {authError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/20"
-            >
-              {isLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : (isRegistering ? '注册并进入系统' : '立即登录')}
-            </button>
-          </form>
-
-          <div className="relative flex items-center py-2">
-            <div className="flex-grow border-t border-white/10"></div>
-            <span className="flex-shrink mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter">或者使用</span>
-            <div className="flex-grow border-t border-white/10"></div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleGoogleLogin}
-            className="w-full h-12 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-medium rounded-xl flex items-center justify-center gap-3 transition-all"
-          >
-            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
-            <span className="text-sm">Google 账号登录</span>
-          </button>
-
-          <div className="text-center">
-            <button 
-              type="button"
-              onClick={() => {
-                setIsRegistering(!isRegistering);
-                setAuthError('');
-              }}
-              className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
-            >
-              {isRegistering ? '已经有账号了？ 立即登录' : '没有账号？ 免费注册'}
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-8 text-center">
-          <p className="text-slate-600 text-[10px] font-bold tracking-widest uppercase opacity-50">
-            Emergency Services Analytics Platform
-          </p>
-        </div>
-      </motion.div>
-    </div>
-  );
+  // --- 视图组件集成 (在所有状态 Hook 之后) ---
+  // 记忆化属性：计算地图显示的视觉中心（优先显示第一个分析成功的点，否则显示第一个上传点）
+  const mapCenter = useMemo(() => {
+    if (results.length > 0) return [results[0].station.lat, results[0].station.lng] as [number, number];
+    if (stations.length > 0) return [stations[0].lat, stations[0].lng] as [number, number];
+    return [22.54, 114.05] as [number, number]; // 默认深圳中心点
+  }, [results, stations]);
 
   if (isAuthChecking) {
     return (
@@ -347,25 +216,118 @@ export default function App() {
 
   if (!user) {
     return (
-      <LoginView 
-        isRegistering={isRegistering}
-        setIsRegistering={setIsRegistering}
-        handleEmailAuth={handleEmailAuth}
-        handleGoogleLogin={handleGoogleLogin}
-        email={email}
-        setEmail={setEmail}
-        password={password}
-        setPassword={setPassword}
-        displayName={displayName}
-        setDisplayName={setDisplayName}
-        authError={authError}
-        setAuthError={setAuthError}
-        isLoading={isLoading}
-      />
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
+        {/* 背景装饰轨迹 */}
+        <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+          <div className="absolute top-[-10%] right-[-10%] w-[500px] h-[500px] bg-red-600 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600 rounded-full blur-[120px]" />
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="relative z-10 w-full max-w-md"
+        >
+          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-16 h-16 bg-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-red-600/30">
+                <MapIcon className="w-8 h-8 text-white" />
+              </div>
+              <h1 className="text-2xl font-black text-white tracking-tight mt-4">
+                FireIsochrone <span className="text-red-500">Pro V2</span>
+              </h1>
+              <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
+                {isRegistering ? '创建您的分析账户' : '消防仿真系统登录'}
+              </p>
+            </div>
+
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              {isRegistering && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
+                  <input 
+                    type="text" 
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="您的姓名或部门"
+                    required={isRegistering}
+                    className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                  />
+                </div>
+              )}
+              
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="email@example.com"
+                  required
+                  className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
+                <input 
+                  type="password" 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                />
+              </div>
+
+              {authError && (
+                <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-2 rounded-lg">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  {authError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/20"
+              >
+                {isLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : (isRegistering ? '注册并进入系统' : '立即登录')}
+              </button>
+            </form>
+
+            <div className="relative flex items-center py-2">
+              <div className="flex-grow border-t border-white/10"></div>
+              <span className="mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">或者使用</span>
+              <div className="flex-grow border-t border-white/10"></div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleGoogleLogin}
+              className="w-full h-12 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-medium rounded-xl flex items-center justify-center gap-3 transition-all"
+            >
+              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
+              <span className="text-sm">Google 账号登录</span>
+            </button>
+
+            <div className="text-center">
+              <button 
+                type="button"
+                onClick={() => {
+                  setIsRegistering(!isRegistering);
+                  setAuthError('');
+                }}
+                className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
+              >
+                {isRegistering ? '已经有账号了？ 立即登录' : '没有账号？ 免费注册'}
+              </button>
+            </div>
+          </div>
+        </motion.div>
+      </div>
     );
   }
-
-  console.log('[App] Rendering main dashboard for:', user.email);
 
   // 处理 Excel/CSV 文件的通用上传函数
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'station' | 'calibration' = 'station') => {
@@ -621,13 +583,6 @@ export default function App() {
       filename: 'fire_isochrones'
     });
   };
-
-  // 记忆化属性：计算地图显示的视觉中心（优先显示第一个分析成功的点，否则显示第一个上传点）
-  const mapCenter = useMemo(() => {
-    if (results.length > 0) return [results[0].station.lat, results[0].station.lng] as [number, number];
-    if (stations.length > 0) return [stations[0].lat, stations[0].lng] as [number, number];
-    return [22.54, 114.05] as [number, number]; // 默认深圳中心点
-  }, [results, stations]);
 
   return (
     // 最外层容器：铺满屏幕高度，采用 Flex 布局（垂直方向）
