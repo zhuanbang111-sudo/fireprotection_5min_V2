@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react'; // 导入 React 核心库及常用钩子
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'; // 导入 React 核心库及常用钩子
 import { 
   Upload,         // 上传图标
   Settings,       // 设置图标
@@ -30,6 +30,7 @@ import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
+import ReCAPTCHA from 'react-google-recaptcha'; // 导入 reCAPTCHA 组件
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -107,6 +108,8 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [recaptchaToken, setRecaptchaToken] = useState<string | null>(null);
+  const recaptchaRef = useRef<ReCAPTCHA>(null);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -170,9 +173,29 @@ export default function App() {
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
+    
+    if (!recaptchaToken) {
+      setAuthError('请先完成人机身份验证');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
+      // 检查当前是否在 AI Studio 预览环境（域名动态变化且未授权）
+      const isAISPreview = window.location.hostname.includes('ais-dev') || 
+                          window.location.hostname.includes('ais-pre') ||
+                          window.location.hostname.includes('googleusercontent.com');
+
+      // 验证 reCAPTCHA 令牌
+      const verifyRes = await axios.post('/api/verify-recaptcha', { 
+        token: recaptchaToken,
+        isTestEnv: isAISPreview
+      });
+      if (!verifyRes.data.success) {
+        throw new Error('reCAPTCHA 验证失败');
+      }
+
       if (isRegistering) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
@@ -180,9 +203,14 @@ export default function App() {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (error: any) {
+      console.error('[Auth] Error:', error);
       if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
       else if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
-      else setAuthError(`认证失败: ${error.code}`);
+      else setAuthError(`认证失败: ${error.message || error.code || '未知错误'}`);
+      
+      // 认证失败时重置 reCAPTCHA
+      setRecaptchaToken(null);
+      recaptchaRef.current?.reset();
     } finally {
       setIsLoading(false);
     }
@@ -287,6 +315,22 @@ export default function App() {
                 </div>
               )}
 
+              {/* reCAPTCHA Widget */}
+              <div className="flex justify-center py-2">
+                <ReCAPTCHA
+                  ref={recaptchaRef}
+                  sitekey={
+                    (window.location.hostname.includes('ais-dev') || 
+                     window.location.hostname.includes('ais-pre') ||
+                     window.location.hostname.includes('googleusercontent.com'))
+                    ? '6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZkhI' // reCAPTCHA v2 Test Site Key
+                    : (import.meta.env.VITE_RECAPTCHA_SITE_KEY || '6LdCiOcsAAAAAINmU4CIODqPwWidlWPJtpAGjS9N')
+                  }
+                  onChange={(token) => setRecaptchaToken(token)}
+                  theme="dark"
+                />
+              </div>
+
               <button
                 type="submit"
                 disabled={isLoading}
@@ -317,6 +361,8 @@ export default function App() {
                 onClick={() => {
                   setIsRegistering(!isRegistering);
                   setAuthError('');
+                  setRecaptchaToken(null);
+                  recaptchaRef.current?.reset();
                 }}
                 className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
               >

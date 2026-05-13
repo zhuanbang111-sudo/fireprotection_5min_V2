@@ -275,6 +275,46 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 /**
+ * ---【系统安全】Google reCAPTCHA v2 验证接口 ---
+ */
+app.post('/api/verify-recaptcha', async (req, res) => {
+  const { token, isTestEnv } = req.body;
+  
+  // 如果是测试环境，使用 Google 官方提供的无需域名校验的测试密钥
+  // 否则使用环境变量中的私钥（或硬核默认值）
+  const secretKey = isTestEnv 
+    ? '6LeIxAcTAAAAAGG-vFI1TnRWxMZNFuojJ4WifJWe' 
+    : (process.env.RECAPTCHA_SECRET_KEY || '6LdCiOcsAAAAAJonYvw5CWrx6bXNNHjjgco58h9k');
+
+  if (!token) {
+    return res.status(400).json({ success: false, message: 'Missing reCAPTCHA token' });
+  }
+
+  try {
+    const response = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify`,
+      null,
+      {
+        params: {
+          secret: secretKey,
+          response: token
+        }
+      }
+    );
+
+    if (response.data.success) {
+      res.json({ success: true });
+    } else {
+      console.warn('[reCAPTCHA] Validation failed:', response.data['error-codes']);
+      res.status(400).json({ success: false, message: 'Verification failed' });
+    }
+  } catch (error: any) {
+    console.error('[reCAPTCHA] Server error:', error.message);
+    res.status(500).json({ success: false, message: 'Internal server error during verification' });
+  }
+});
+
+/**
  * ---【模型校验拟合器】核心算法 ---
  * app.post 定义了一个接口 '/api/calibrate'，用于根据历史实测数据自动寻找最优参数。
  */
