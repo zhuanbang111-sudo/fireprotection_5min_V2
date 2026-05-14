@@ -45,13 +45,40 @@ app.use(express.json({ limit: '50mb' }));
 // ---【核心优先级修复】API 路由必须放在所有中间件的最前面 ---
 app.use('/api', apiRouter);
 
-// ---【系统认证逻辑】支持多种认证途径，解决大陆网络及演示便利性问题 ---
+// ---【系统认证与限额逻辑】---
 
-// 途径 1: 极致简单的“一键演示”通道 (零配置，适合环境极其受限时)
+// 内存中维护演示账户的限额（生产环境建议配合数据库存储，当前为演示版本）
+let demoUsageCount = 0;
+const MAX_DEMO_USAGE = 10;
+
+// 校验限额的中间件
+const checkUsageLimit = (req: any, res: any, next: any) => {
+  const userId = req.headers['x-user-id']; // 我们约定前端在请求头中传递 uid
+  if (userId === 'demo-999') {
+    if (demoUsageCount >= MAX_DEMO_USAGE) {
+      return res.status(403).json({ 
+        success: false, 
+        message: `快速试用额度已用尽（共 ${MAX_DEMO_USAGE} 次），请注册账号继续使用完整功能` 
+      });
+    }
+    demoUsageCount++;
+    res.locals.remaining = MAX_DEMO_USAGE - demoUsageCount;
+    console.log(`[Limit] Demo user usage: ${demoUsageCount}/${MAX_DEMO_USAGE}`);
+  }
+  next();
+};
+
+// 途径 1: 极致简单的“一键演示”通道
 apiRouter.post('/auth/instant', (req, res) => {
   res.json({ 
     success: true, 
-    user: { uid: 'demo-999', email: 'demo@fire-engineer.local', displayName: '演示专家/指挥官' } 
+    user: { 
+      uid: 'demo-999', 
+      email: 'demo@fire-engineer.local', 
+      displayName: '演示专家/指挥官',
+      isTrial: true,
+      remaining: MAX_DEMO_USAGE - demoUsageCount
+    } 
   });
 });
 
@@ -193,9 +220,9 @@ export function bd09_to_gcj02(bd_lon: number, bd_lat: number) {
 
 /**
  * ---【业务核心逻辑】消防站点多维等时圈分析接口 ---
- * app.post 定义了一个 POST 类型的 API 路由 '/api/analyze'，用来执行复杂的后端计算任务。
+ * 定义了一个 POST 类型的 API 路由 '/analyze'，用来执行复杂的后端计算任务。
  */
-app.post('/api/analyze', async (req, res) => {
+apiRouter.post('/analyze', checkUsageLimit, async (req, res) => {
   // 从前端发送的 HTTP 请求请求体中，通过解构赋值一次性提取出所有控制参数
   const { 
     apiKeys,     // 用户输入的高德地图开发者申请的秘钥列表（用于并发配额分摊）
@@ -354,7 +381,8 @@ app.post('/api/analyze', async (req, res) => {
       trailPoints: trailPoints, // 海量的带时间标签的轨迹点点云数据集
       anchorCount: uniqueAnchors.length, // 反馈合计分析了多少个目的地地标点
       apiCalls: uniqueAnchors.length + 10, // 反馈后端累计消耗的高德地图信用点（API 调用数）
-      wgsOrigin: [wgsLng, wgsLat] // 准确的地球姿态系统下的消防站原点坐标对 [经度, 纬度]
+      wgsOrigin: [wgsLng, wgsLat], // 准确的地球姿态系统下的消防站原点坐标对 [经度, 纬度]
+      remaining: res.locals.remaining
     });
 
   } catch (error: any) {
@@ -367,7 +395,7 @@ app.post('/api/analyze', async (req, res) => {
 /**
  * ---【模型校验拟合器】核心算法 ---
  */
-apiRouter.post('/calibrate', async (req, res) => {
+apiRouter.post('/calibrate', checkUsageLimit, async (req, res) => {
   const { apiKeys, samples, coordSystem } = req.body;
   
   if (!apiKeys || !samples || samples.length === 0) {
@@ -477,7 +505,8 @@ apiRouter.post('/calibrate', async (req, res) => {
       recommendedEntrySpeed: Number(bestEntrySpeed.toFixed(2)),
       averageErrorSeconds: Number(finalAvgError.toFixed(2)),
       sampleCount: results.length,
-      trimmedCount: Math.floor(results.length * 0.2)
+      trimmedCount: Math.floor(results.length * 0.2),
+      remaining: res.locals.remaining
     });
 
   } catch (error: any) {

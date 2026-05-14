@@ -101,6 +101,9 @@ export default function App() {
         const userData = response.data.user;
         setUser(userData);
         localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        if (userData.isTrial) {
+          addLog(`✅ 已进入快速试用模式。剩余测算额度: ${userData.remaining} 次`);
+        }
       }
     } catch (error: any) {
       const msg = error.response?.data?.message || '服务器连接失败';
@@ -292,6 +295,9 @@ export default function App() {
                       if (res.data.success) {
                         setUser(res.data.user);
                         localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
+                        if (res.data.user.isTrial) {
+                          addLog(`🚀 快速进入成功！剩余试用额度: ${res.data.user.remaining} 次`);
+                        }
                       }
                     } catch (e) {
                       setAuthError('快速进入服务暂时不可用');
@@ -464,7 +470,13 @@ export default function App() {
         apiKeys: keyList,
         samples,
         coordSystem: calibrationCoordSystem
+      }, {
+        headers: { 'x-user-id': user?.uid }
       });
+
+      if (response.data.remaining !== undefined) {
+        setUser(prev => prev ? { ...prev, remaining: response.data.remaining } : null);
+      }
 
       if (response.data.sampleCount === 0) {
         throw new Error('后端未能成功分析任何样本路径，请检查 API Key 或样本点是否在路网外。');
@@ -583,7 +595,13 @@ export default function App() {
           coordSystem,                       // 坐标系标识
           entrySpeed,                        // 地块内部速
           entryPenalty: 0                     // (已移除该功能)
+        }, {
+          headers: { 'x-user-id': user?.uid }
         });
+
+        if (response.data.remaining !== undefined) {
+          setUser(prev => prev ? { ...prev, remaining: response.data.remaining } : null);
+        }
 
         const { trailPoints, anchorCount, apiCalls, wgsOrigin } = response.data; // 获取后端仿真出的海量粒子数据
         const targetSec = (targetMin * 60) / factor; // 换算成路网规划的基础秒数目标
@@ -609,7 +627,12 @@ export default function App() {
         }
       } catch (error: any) {
         // 捕获 API 限制或网络错误
-        addLog(`❌ ${station.station_name} 失败: ${error.message}`);
+        const errorMsg = error.response?.data?.message || error.message;
+        addLog(`❌ ${station.station_name} 失败: ${errorMsg}`);
+        if (error.response?.status === 403) {
+          setAuthError(errorMsg);
+          break; // 停止后续站点分析
+        }
       }
     }
 
@@ -678,7 +701,14 @@ export default function App() {
               <img src={user.photoURL} alt={user.displayName || ''} className="w-6 h-6 rounded-full border border-slate-300" />
             )}
             <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-700 leading-none">{user?.displayName || user?.email}</span>
+              <span className="text-[10px] font-black text-slate-700 leading-none">
+                {user?.displayName || user?.email}
+                {user?.isTrial && (
+                  <span className="ml-2 px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-bold">
+                    试用额度: {user.remaining} 次
+                  </span>
+                )}
+              </span>
               <button 
                 onClick={handleLogout}
                 className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter"
