@@ -86,7 +86,29 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passcode, setPasscode] = useState(''); // 新增：访客通行码
   const [displayName, setDisplayName] = useState('');
+
+  // ...
+  const handleVisitorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passcode) return setAuthError('请输入访问口令');
+    setAuthError('');
+    setIsLoading(true);
+    try {
+      const response = await axios.post('/api/auth/visitor', { passcode });
+      if (response.data.success) {
+        const userData = response.data.user;
+        setUser(userData);
+        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+      }
+    } catch (error: any) {
+      const msg = error.response?.data?.message || '服务器连接失败';
+      setAuthError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -234,86 +256,139 @@ export default function App() {
               </p>
             </div>
 
-            <form onSubmit={handleEmailAuth} className="space-y-4">
-              {isRegistering && (
-                <div className="space-y-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
-                  <input 
-                    type="text" 
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="您的姓名或部门"
-                    required={isRegistering}
-                    className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
-                  />
-                </div>
-              )}
-              
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="email@example.com"
-                  required
-                  className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
-                />
+            <div className="space-y-4">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-4">
+                <p className="text-[10px] text-amber-200/80 leading-relaxed text-center">
+                  <span className="font-bold text-amber-400">💡 提示：</span>
+                  中国大陆用户若遇到网络错误，请尝试使用<span className="text-white font-bold ml-1">“访客口令”</span>直接进入。
+                </p>
               </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
-                <input 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
-                />
+              {/* 选项卡切换 */}
+              <div className="flex bg-white/5 p-1 rounded-lg border border-white/10 mb-2">
+                <button 
+                  onClick={() => { setIsRegistering(false); setPasscode(''); setAuthError(''); }}
+                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${!isRegistering && !passcode ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  账号登录
+                </button>
+                <button 
+                  onClick={() => { setIsRegistering(true); setPasscode(''); setAuthError(''); }}
+                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  注册
+                </button>
+                <button 
+                  onClick={() => { setPasscode(' '); setIsRegistering(false); setAuthError(''); }}
+                  className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${passcode ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  口令
+                </button>
+                <button 
+                  onClick={async () => {
+                    setIsLoading(true);
+                    try {
+                      const res = await axios.post('/api/auth/instant');
+                      if (res.data.success) {
+                        setUser(res.data.user);
+                        localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
+                      }
+                    } catch (e) {
+                      setAuthError('快速进入服务暂时不可用');
+                    } finally {
+                      setIsLoading(false);
+                    }
+                  }}
+                  className="flex-1 py-1.5 text-[11px] font-bold rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"
+                >
+                  快速试用
+                </button>
               </div>
 
-              {authError && (
-                <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-2 rounded-lg">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  {authError}
-                </div>
-              )}
+              <form onSubmit={passcode ? handleVisitorLogin : handleEmailAuth} className="space-y-4">
+                {passcode ? (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">访问秘钥 (Passcode)</label>
+                    <input
+                      type="password"
+                      required
+                      value={passcode === ' ' ? '' : passcode}
+                      onChange={(e) => setPasscode(e.target.value)}
+                      placeholder="请输入内部口令 (默认: fire2024)"
+                      className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    {isRegistering && (
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
+                        <input 
+                          type="text" 
+                          value={displayName}
+                          onChange={(e) => setDisplayName(e.target.value)}
+                          placeholder="您的姓名或部门"
+                          required={isRegistering}
+                          className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                        />
+                      </div>
+                    )}
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
+                      <input 
+                        type="email" 
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="email@example.com"
+                        required
+                        className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
+                      <input 
+                        type="password" 
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        required
+                        className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {authError && (
+                  <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-3 rounded-xl border border-red-400/20">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {authError}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/30 flex items-center justify-center gap-2"
+                >
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (passcode ? '口令验证并登录' : (isRegistering ? '注册并进入系统' : '立即登录'))}
+                </button>
+              </form>
+
+              <div className="relative flex items-center py-2">
+                <div className="flex-grow border-t border-white/10"></div>
+                <span className="mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">其他选项</span>
+                <div className="flex-grow border-t border-white/10"></div>
+              </div>
 
               <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/20"
-              >
-                {isLoading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : (isRegistering ? '注册并进入系统' : '立即登录')}
-              </button>
-            </form>
-
-            <div className="relative flex items-center py-2">
-              <div className="flex-grow border-t border-white/10"></div>
-              <span className="mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">或者使用</span>
-              <div className="flex-grow border-t border-white/10"></div>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              className="w-full h-12 bg-white/5 border border-white/10 hover:bg-white/10 text-white font-medium rounded-xl flex items-center justify-center gap-3 transition-all"
-            >
-              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
-              <span className="text-sm">Google 账号登录</span>
-            </button>
-
-            <div className="text-center">
-              <button 
                 type="button"
-                onClick={() => {
-                  setIsRegistering(!isRegistering);
-                  setAuthError('');
-                }}
-                className="text-[11px] text-slate-400 hover:text-white font-medium transition-colors"
+                onClick={handleGoogleLogin}
+                className="w-full h-10 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-[12px] font-medium rounded-xl flex items-center justify-center gap-2 transition-all opacity-60 hover:opacity-100"
               >
-                {isRegistering ? '已经有账号了？ 立即登录' : '没有账号？ 免费注册'}
+                <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3 h-3 grayscale" />
+                <span>Google 账号 (可能受限)</span>
               </button>
             </div>
           </div>

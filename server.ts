@@ -35,77 +35,72 @@ try {
   console.error('[FIRE_ENGINEER] Firebase 初始化失败:', error.message);
 }
 
-const app = express(); // 执行函数，初始化一个具备路由分发和中间件处理能力的 Express 应用程序实例
-const PORT = 3000; // 定义服务器监听的端口号为 3000，这是所有用户访问该后端服务的唯一入口
-
-app.use(cors()); // 在应用程序中全面启用跨域选项，授权所有来源的前端界面都能访问我们的业务数据
-app.use(express.json({ limit: '50mb' })); // 开启 JSON 格式的请求体解析引擎，并将允许接收的数据上限设为 50MB，防止消防站大数据量站点被拦截
-
-// ---【系统状态】健康检查接口 ---
+const app = express();
+const PORT = 3000;
 const apiRouter = express.Router();
 
-apiRouter.all('/health', (req, res) => {
-  console.log(`[DEBUG] API Health accessed: ${req.method} ${req.url}`);
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+// ---【核心优先级修复】API 路由必须放在所有中间件的最前面 ---
+app.use('/api', apiRouter);
+
+// ---【系统认证逻辑】支持多种认证途径，解决大陆网络及演示便利性问题 ---
+
+// 途径 1: 极致简单的“一键演示”通道 (零配置，适合环境极其受限时)
+apiRouter.post('/auth/instant', (req, res) => {
   res.json({ 
-    status: 'ok', 
-    firebase: !!auth,
-    time: new Date().toISOString(),
-    method: req.method,
-    headers: req.headers
+    success: true, 
+    user: { uid: 'demo-999', email: 'demo@fire-engineer.local', displayName: '演示专家/指挥官' } 
   });
 });
 
-// ---【系统安全】Firebase 认证代理接口 (解决大陆无法访问 Firebase 的问题) ---
+// 途径 2: 访客定制多口令清单 (支持有效期)
+const VALID_PASSCODES = [
+  { code: 'fire2024', name: '普通访客', expiry: '2026-12-31' },
+  { code: 'vip888', name: '高级专家', expiry: '2027-01-01' },
+  { code: 'test001', name: '临时测试', expiry: '2026-05-15' }
+];
+
+apiRouter.post('/auth/visitor', (req, res) => {
+  const { passcode } = req.body;
+  const match = VALID_PASSCODES.find(p => p.code === passcode);
+  if (!match) return res.status(401).json({ success: false, message: '口令无效' });
+  if (new Date() > new Date(match.expiry)) return res.status(403).json({ success: false, message: '口令已过期' });
+  res.json({ success: true, user: { uid: `v-${match.code}`, email: `${match.code}@local`, displayName: match.name } });
+});
+
+// 途径 3: Firebase 认证中转代理
 apiRouter.post('/auth/login', async (req, res) => {
-  console.log('[DEBUG] Login request received for:', req.body.email);
-  if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
+  if (!auth) return res.status(503).json({ success: false, message: '认证中转服务未启动' });
   const { email, password } = req.body;
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const user = userCredential.user;
-    res.json({ 
-      success: true, 
-      user: {
-        uid: user.uid,
-        email: user.email,
-        displayName: user.displayName,
-        photoURL: user.photoURL
-      }
-    });
-  } catch (error: any) {
-    console.error('[Auth Proxy] Login Error:', error.message);
-    res.status(401).json({ success: false, code: error.code, message: error.message });
-  }
+    res.json({ success: true, user: { uid: userCredential.user.uid, email: userCredential.user.email, displayName: userCredential.user.displayName } });
+  } catch (error: any) { res.status(401).json({ success: false, message: '账号或密码错误' }); }
 });
 
 apiRouter.post('/auth/register', async (req, res) => {
-  if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
+  if (!auth) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
   const { email, password, displayName } = req.body;
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
-    const user = userCredential.user;
-    res.json({ 
-      success: true, 
-      user: {
-        uid: user.uid,
-        email: user.email,
-        displayName: displayName || '新用户'
-      }
-    });
-  } catch (error: any) {
-    console.error('[Auth Proxy] Register Error:', error.message);
-    res.status(400).json({ success: false, code: error.code, message: error.message });
-  }
+    if (displayName) await updateProfile(userCredential.user, { displayName });
+    res.json({ success: true, user: { uid: userCredential.user.uid, email: userCredential.user.email, displayName: displayName || '新用户' } });
+  } catch (error: any) { res.status(400).json({ success: false, message: error.message }); }
 });
 
 apiRouter.post('/auth/logout', async (req, res) => {
-  try {
-    if (auth) await firebaseSignOut(auth);
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+  try { if (auth) await firebaseSignOut(auth); res.json({ success: true }); } catch (e) { res.status(500).json({ success: false }); }
+});
+
+// ---【系统状态】健康检查接口 ---
+apiRouter.all('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    firebase: !!auth,
+    time: new Date().toISOString()
+  });
 });
 
 /**
@@ -371,9 +366,8 @@ app.post('/api/analyze', async (req, res) => {
 
 /**
  * ---【模型校验拟合器】核心算法 ---
- * app.post 定义了一个接口 '/api/calibrate'，用于根据历史实测数据自动寻找最优参数。
  */
-app.post('/api/calibrate', async (req, res) => {
+apiRouter.post('/calibrate', async (req, res) => {
   const { apiKeys, samples, coordSystem } = req.body;
   
   if (!apiKeys || !samples || samples.length === 0) {
@@ -491,8 +485,7 @@ app.post('/api/calibrate', async (req, res) => {
   }
 });
 
-// 挂载 API 路由到 /api 路径上
-app.use('/api', apiRouter);
+// 挂载 API 路由到 /api 路径上完成
 
 /**
  * ---【系统运营控制】服务器启动逻辑 ---
