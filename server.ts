@@ -4,6 +4,7 @@ import path from 'path'; // 导入 Node.js 原生的 path 模块，用于处理�
 import axios from 'axios'; // 导入 axios 库，这是一款优秀的基于 Promise 的 HTTP 客户端，我们用它在服务器端向高德地图 API 发起数据请求
 import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览器的“同源策略”限制，允许前端网页跨域调用后端的 API 接口
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
+import fs from 'fs';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -12,13 +13,27 @@ import {
   updateProfile,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
-// 初始化 Firebase (在后端运行，不受大陆网络限制)
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
+// 尝试读取 Firebase 配置
+let firebaseApp: any;
+let auth: any;
+
+try {
+  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // 初始化 Firebase (在后端运行，不受大陆网络限制)
+    firebaseApp = initializeApp(firebaseConfig);
+    auth = getAuth(firebaseApp);
+    console.log('[FIRE_ENGINEER] Firebase 初始化成功');
+  } else {
+    console.warn('[FIRE_ENGINEER] 找不到 firebase-applet-config.json，Auth 功能将受限');
+  }
+} catch (error: any) {
+  console.error('[FIRE_ENGINEER] Firebase 初始化失败:', error.message);
+}
 
 const app = express(); // 执行函数，初始化一个具备路由分发和中间件处理能力的 Express 应用程序实例
 const PORT = 3000; // 定义服务器监听的端口号为 3000，这是所有用户访问该后端服务的唯一入口
@@ -27,9 +42,23 @@ app.use(cors()); // 在应用程序中全面启用跨域选项，授权所有来
 app.use(express.json({ limit: '50mb' })); // 开启 JSON 格式的请求体解析引擎，并将允许接收的数据上限设为 50MB，防止消防站大数据量站点被拦截
 
 /**
+ * ---【系统状态】健康检查接口 ---
+ */
+app.get('/api/health', (req, res) => {
+  console.log('[DEBUG] Health check hit');
+  res.json({ 
+    status: 'ok', 
+    firebase: !!auth,
+    time: new Date().toISOString()
+  });
+});
+
+/**
  * ---【系统安全】Firebase 认证代理接口 (解决大陆无法访问 Firebase 的问题) ---
  */
 app.post('/api/auth/login', async (req, res) => {
+  console.log('[DEBUG] Login request received for:', req.body.email);
+  if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
   const { email, password } = req.body;
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
@@ -50,6 +79,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
+  if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
   const { email, password, displayName } = req.body;
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);

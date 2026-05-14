@@ -115,6 +115,16 @@ export default function App() {
 
   // --- 监听 Auth 变化 (本地 Session 模拟) ---
   useEffect(() => {
+    const checkConnectivity = async () => {
+      try {
+        const res = await axios.get('/api/health');
+        console.log('[App] Backend health:', res.data);
+      } catch (e) {
+        console.error('[App] Backend connectivity issue:', e);
+      }
+    };
+    checkConnectivity();
+
     const savedUser = localStorage.getItem('fire_isochrone_user');
     if (savedUser) {
       try {
@@ -150,11 +160,12 @@ export default function App() {
       }
     } catch (error: any) {
       console.error('[Auth Proxy] Error:', error);
-      const msg = error.response?.data?.message || '网络错误，请稍后再试';
+      const msg = error.response?.data?.message || error.message || '网络错误，请稍后再试';
+      const status = error.response?.status;
       
       if (msg.includes('email-already-in-use')) setAuthError('该邮箱已被注册');
       else if (msg.includes('invalid-credential')) setAuthError('邮箱或密码错误');
-      else setAuthError(`认证失败: ${msg}`);
+      else setAuthError(`认证失败 [${status || 'ERR'}]: ${msg}`);
     } finally {
       setIsLoading(false);
     }
