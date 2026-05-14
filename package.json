@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@supabase/supabase-js": "^2.105.4",
     "@tailwindcss/vite": "^4.1.14",
     "@turf/turf": "^7.3.4",
     "@vitejs/plugin-react": "^5.0.4",
@@ -20,7 +21,6 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "file-saver": "^2.0.5",
-    "firebase": "^12.13.0",
     "jszip": "^3.10.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.546.0",

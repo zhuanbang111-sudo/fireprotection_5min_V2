@@ -5,34 +5,19 @@ import axios from 'axios'; // 导入 axios 库，这是一款优秀的基于 Pro
 import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览器的“同源策略”限制，允许前端网页跨域调用后端的 API 接口
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  updateProfile,
-  signOut as firebaseSignOut
-} from 'firebase/auth';
+import { createClient } from '@supabase/supabase-js';
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
-// 尝试读取 Firebase 配置
-let firebaseApp: any;
-let auth: any;
+// 初始化 Supabase
+const supabaseUrl = process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-try {
-  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    // 初始化 Firebase (在后端运行，不受大陆网络限制)
-    firebaseApp = initializeApp(firebaseConfig);
-    auth = getAuth(firebaseApp);
-    console.log('[FIRE_ENGINEER] Firebase 初始化成功');
-  } else {
-    console.warn('[FIRE_ENGINEER] 找不到 firebase-applet-config.json，Auth 功能将受限');
-  }
-} catch (error: any) {
-  console.error('[FIRE_ENGINEER] Firebase 初始化失败:', error.message);
+if (supabaseUrl && supabaseKey) {
+  console.log('[FIRE_ENGINEER] Supabase 初始化成功');
+} else {
+  console.warn('[FIRE_ENGINEER] 缺少 Supabase 环境变量，Auth 功能将受限');
 }
 
 const app = express();
@@ -97,35 +82,68 @@ apiRouter.post('/auth/visitor', (req, res) => {
   res.json({ success: true, user: { uid: `v-${match.code}`, email: `${match.code}@local`, displayName: match.name } });
 });
 
-// 途径 3: Firebase 认证中转代理
+// 途径 3: Supabase 认证中转代理
 apiRouter.post('/auth/login', async (req, res) => {
-  if (!auth) return res.status(503).json({ success: false, message: '认证中转服务未启动' });
+  if (!supabaseUrl) return res.status(503).json({ success: false, message: '认证中转服务未启动' });
   const { email, password } = req.body;
   try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    res.json({ success: true, user: { uid: userCredential.user.uid, email: userCredential.user.email, displayName: userCredential.user.displayName } });
-  } catch (error: any) { res.status(401).json({ success: false, message: '账号或密码错误' }); }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    res.json({ 
+      success: true, 
+      user: { 
+        uid: data.user.id, 
+        email: data.user.email, 
+        displayName: data.user.user_metadata?.full_name || data.user.email 
+      } 
+    });
+  } catch (error: any) { 
+    res.status(401).json({ success: false, message: error.message || '账号或密码错误' }); 
+  }
 });
 
 apiRouter.post('/auth/register', async (req, res) => {
-  if (!auth) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
+  if (!supabaseUrl) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
   const { email, password, displayName } = req.body;
   try {
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    if (displayName) await updateProfile(userCredential.user, { displayName });
-    res.json({ success: true, user: { uid: userCredential.user.uid, email: userCredential.user.email, displayName: displayName || '新用户' } });
-  } catch (error: any) { res.status(400).json({ success: false, message: error.message }); }
+    const { data, error } = await supabase.auth.signUp({ 
+      email, 
+      password,
+      options: {
+        data: {
+          full_name: displayName
+        }
+      }
+    });
+    if (error) throw error;
+    if (!data.user) throw new Error('注册未返回用户信息');
+    res.json({ 
+      success: true, 
+      user: { 
+        uid: data.user.id, 
+        email: data.user.email, 
+        displayName: displayName || '新用户' 
+      } 
+    });
+  } catch (error: any) { 
+    res.status(400).json({ success: false, message: error.message }); 
+  }
 });
 
 apiRouter.post('/auth/logout', async (req, res) => {
-  try { if (auth) await firebaseSignOut(auth); res.json({ success: true }); } catch (e) { res.status(500).json({ success: false }); }
+  try { 
+    await supabase.auth.signOut(); 
+    res.json({ success: true }); 
+  } catch (e: any) { 
+    res.status(500).json({ success: false, message: e.message }); 
+  }
 });
 
 // ---【系统状态】健康检查接口 ---
 apiRouter.all('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    firebase: !!auth,
+    supabase: !!supabaseUrl,
     time: new Date().toISOString()
   });
 });

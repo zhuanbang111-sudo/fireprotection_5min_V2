@@ -28,8 +28,8 @@
 - **原生 WGS84 支持**：默认支持 WGS-84 标准 GPS 坐标，同时兼容 GCJ-02 与 BD-09。数据入库自动纠编，成果导出零漂移对齐。
 
 ### 6. 安全登录与访问控制 (Authentication)
-- **Firebase Auth 集成**：支持基于 Google 账号的生产级身份验证，保护敏感消防规划数据。
-- **权限隔离**：内置登录页面，通过 OAuth 2.0 协议确保只有授权用户可进入仿真分析系统。
+- **Supabase Auth 集成**：支持基于邮箱账号的生产级身份验证，保护敏感消防规划数据。
+- **权限隔离**：内置登录页面，确保只有授权用户可进入仿真分析系统。
 
 ## ✨ 功能特性
 
@@ -71,14 +71,13 @@
 - 分析过程涉及大量路网计算，请关注当日 API 配额剩余情况。
 - **导出 SHP 文件**：默认为 WGS-84 地球标准坐标系。
 
-## 🌐 部署与分享 (Cloudflare / Custom Domain)
+## 🌐 部署与分享
+若您计划分享此应用：
 
-若您计划通过 Cloudflare 或自定义域名分享此应用：
-
-1. **设置 Firebase 授权域名**：
-   - 登录 [Firebase 控制台](https://console.firebase.google.com/)。
-   - 导航至 **Authentication > Settings > Authorized domains**。
-   - 将您的分享域名（如 `urbancopilotfire.cc.cd`）添加至白名单。
+1. **设置 Supabase 环境变量**：
+   - 登录 [Supabase 控制台](https://supabase.com/)。
+   - 创建新项目并获取 `API URL` 和 `anon key`。
+   - 在 `.env` 中配置 `SUPABASE_URL` 和 `SUPABASE_ANON_KEY`。
 2. **重定向处理**：
    - 确保您的托管平台支持单页应用（SPA）路由重定向到 `index.html`。
 3. **API 秘钥安全**：

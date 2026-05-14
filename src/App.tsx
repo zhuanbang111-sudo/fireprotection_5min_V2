@@ -148,6 +148,9 @@ export default function App() {
           addLog('🚨 发现环境异常：后端接口返回了 HTML 页面。这通常是因为该域名只有静态前端，没有后端容器在运行。');
           setAuthError('检测到当前环境仅支持静态页面，无法连接到认证后端。请在 AI Studio 预览或部署正确的 Full-stack 版本。');
         }
+        if (res.data.supabase === false) {
+          addLog('⚠️ 警告：后端 Supabase 未配置，请在环境变量中设置 SUPABASE_URL 和 SUPABASE_ANON_KEY');
+        }
       } catch (e: any) {
         console.error('[App] Backend connectivity issue:', e);
         const status = e.response?.status;
