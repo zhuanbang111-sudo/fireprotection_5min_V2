@@ -41,22 +41,22 @@ const PORT = 3000; // 定义服务器监听的端口号为 3000，这是所有�
 app.use(cors()); // 在应用程序中全面启用跨域选项，授权所有来源的前端界面都能访问我们的业务数据
 app.use(express.json({ limit: '50mb' })); // 开启 JSON 格式的请求体解析引擎，并将允许接收的数据上限设为 50MB，防止消防站大数据量站点被拦截
 
-/**
- * ---【系统状态】健康检查接口 ---
- */
-app.get('/api/health', (req, res) => {
-  console.log('[DEBUG] Health check hit');
+// ---【系统状态】健康检查接口 ---
+const apiRouter = express.Router();
+
+apiRouter.all('/health', (req, res) => {
+  console.log(`[DEBUG] API Health accessed: ${req.method} ${req.url}`);
   res.json({ 
     status: 'ok', 
     firebase: !!auth,
-    time: new Date().toISOString()
+    time: new Date().toISOString(),
+    method: req.method,
+    headers: req.headers
   });
 });
 
-/**
- * ---【系统安全】Firebase 认证代理接口 (解决大陆无法访问 Firebase 的问题) ---
- */
-app.post('/api/auth/login', async (req, res) => {
+// ---【系统安全】Firebase 认证代理接口 (解决大陆无法访问 Firebase 的问题) ---
+apiRouter.post('/auth/login', async (req, res) => {
   console.log('[DEBUG] Login request received for:', req.body.email);
   if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
   const { email, password } = req.body;
@@ -78,7 +78,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/register', async (req, res) => {
+apiRouter.post('/auth/register', async (req, res) => {
   if (!auth) return res.status(503).json({ success: false, message: 'Auth service not initialized' });
   const { email, password, displayName } = req.body;
   try {
@@ -99,9 +99,9 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/logout', async (req, res) => {
+apiRouter.post('/auth/logout', async (req, res) => {
   try {
-    await firebaseSignOut(auth);
+    if (auth) await firebaseSignOut(auth);
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message });
@@ -491,11 +491,22 @@ app.post('/api/calibrate', async (req, res) => {
   }
 });
 
+// 挂载 API 路由到 /api 路径上
+app.use('/api', apiRouter);
+
 /**
  * ---【系统运营控制】服务器启动逻辑 ---
  */
 async function startServer() {
-  // 如果识别为开发调试环境，则挂载 Vite 的极速热更新中间件，开发者修改代码后浏览器会秒级刷新预览
+  // 打印注册好的路由，方便调试
+  console.log('[DEBUG] Active routes:');
+  apiRouter.stack.forEach((r: any) => {
+    if (r.route && r.route.path) {
+      console.log(` - ${Object.keys(r.route.methods).join(',').toUpperCase()} /api${r.route.path}`);
+    }
+  });
+
+  // 如果识别为开发调试环境，则挂载 Vite 的极速热更新中间件
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true }, // 将 Vite 作为一个插件嵌入到我们自主开发的 Express 逻辑中
@@ -509,6 +520,10 @@ async function startServer() {
     
     // 全路径兜底逻辑：防止用户刷新非根路径页面时出现 404，统一重定向给前端 index.html 接管渲染
     app.get('*', (req, res) => {
+      // 排除 /api 路径，避免其返回 HTML
+      if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: `API route not found: ${req.path}` });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

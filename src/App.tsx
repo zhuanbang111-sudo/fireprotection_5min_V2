@@ -119,8 +119,16 @@ export default function App() {
       try {
         const res = await axios.get('/api/health');
         console.log('[App] Backend health:', res.data);
-      } catch (e) {
+        if (typeof res.data === 'string' && res.data.includes('<!doctype html>')) {
+          addLog('🚨 发现环境异常：后端接口返回了 HTML 页面。这通常是因为该域名只有静态前端，没有后端容器在运行。');
+          setAuthError('检测到当前环境仅支持静态页面，无法连接到认证后端。请在 AI Studio 预览或部署正确的 Full-stack 版本。');
+        }
+      } catch (e: any) {
         console.error('[App] Backend connectivity issue:', e);
+        const status = e.response?.status;
+        if (status === 405) {
+          setAuthError('认证服务拒绝请求 (405 Method Not Allowed)。请检查服务器路由配置或尝试刷新页面。');
+        }
       }
     };
     checkConnectivity();
