@@ -30,24 +30,6 @@ import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
-import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  signOut, 
-  User,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  updateProfile
-} from 'firebase/auth';
-import firebaseConfig from '../firebase-applet-config.json';
-
-// --- Firebase 初始化 ---
-const firebaseApp = initializeApp(firebaseConfig);
-const auth = getAuth(firebaseApp);
-const googleProvider = new GoogleAuthProvider();
 
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
@@ -98,8 +80,8 @@ function MapUpdater({ center }: { center: [number, number] }) {
 const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 
 export default function App() {
-  // --- 权限相关状态 ---
-  const [user, setUser] = useState<User | null>(null);
+// --- 权限相关状态 ---
+  const [user, setUser] = useState<any | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
@@ -131,60 +113,48 @@ export default function App() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // --- 监听 Auth 变化 ---
+  // --- 监听 Auth 变化 (本地 Session 模拟) ---
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (isAuthChecking) {
-        setIsAuthChecking(false);
-      }
-    }, 8000);
-
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthChecking(false);
-      clearTimeout(timer);
-    }, () => {
-      setIsAuthChecking(false);
-      clearTimeout(timer);
-    });
-
-    return () => {
-      unsubscribe();
-      clearTimeout(timer);
-    };
-  }, []); // Remove isAuthChecking from dependency to prevent loop
-
-  const handleGoogleLogin = async () => {
-    setAuthError('');
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (error: any) {
-      if (error.code === 'auth/unauthorized-domain') {
-        setAuthError(`域名未授权：请在 Firebase 控制台添加 "${window.location.hostname}"。`);
-      } else {
-        setAuthError(`登录失败: ${error.message}`);
+    const savedUser = localStorage.getItem('fire_isochrone_user');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (e) {
+        localStorage.removeItem('fire_isochrone_user');
       }
     }
+    setIsAuthChecking(false);
+  }, []);
+
+  const handleGoogleLogin = () => {
+    setAuthError('由于大陆网络限制，Google 登录目前不可用。请使用邮箱账号登录。');
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-    
     setIsLoading(true);
 
     try {
-      if (isRegistering) {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
-      } else {
-        await signInWithEmailAndPassword(auth, email, password);
+      const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
+      const response = await axios.post(endpoint, {
+        email,
+        password,
+        displayName
+      });
+
+      if (response.data.success) {
+        const userData = response.data.user;
+        setUser(userData);
+        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
       }
     } catch (error: any) {
-      console.error('[Auth] Error:', error);
-      if (error.code === 'auth/email-already-in-use') setAuthError('该邮箱已被注册');
-      else if (error.code === 'auth/invalid-credential') setAuthError('邮箱或密码错误');
-      else setAuthError(`认证失败: ${error.message || error.code || '未知错误'}`);
+      console.error('[Auth Proxy] Error:', error);
+      const msg = error.response?.data?.message || '网络错误，请稍后再试';
+      
+      if (msg.includes('email-already-in-use')) setAuthError('该邮箱已被注册');
+      else if (msg.includes('invalid-credential')) setAuthError('邮箱或密码错误');
+      else setAuthError(`认证失败: ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -192,7 +162,9 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await axios.post('/api/auth/logout');
+      setUser(null);
+      localStorage.removeItem('fire_isochrone_user');
       setResults([]);
       setStations([]);
     } catch (error) {

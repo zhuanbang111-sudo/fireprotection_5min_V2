@@ -4,14 +4,79 @@ import path from 'path'; // 导入 Node.js 原生的 path 模块，用于处理�
 import axios from 'axios'; // 导入 axios 库，这是一款优秀的基于 Promise 的 HTTP 客户端，我们用它在服务器端向高德地图 API 发起数据请求
 import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览器的“同源策略”限制，允许前端网页跨域调用后端的 API 接口
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
+
+// 初始化 Firebase (在后端运行，不受大陆网络限制)
+const firebaseApp = initializeApp(firebaseConfig);
+const auth = getAuth(firebaseApp);
 
 const app = express(); // 执行函数，初始化一个具备路由分发和中间件处理能力的 Express 应用程序实例
 const PORT = 3000; // 定义服务器监听的端口号为 3000，这是所有用户访问该后端服务的唯一入口
 
 app.use(cors()); // 在应用程序中全面启用跨域选项，授权所有来源的前端界面都能访问我们的业务数据
 app.use(express.json({ limit: '50mb' })); // 开启 JSON 格式的请求体解析引擎，并将允许接收的数据上限设为 50MB，防止消防站大数据量站点被拦截
+
+/**
+ * ---【系统安全】Firebase 认证代理接口 (解决大陆无法访问 Firebase 的问题) ---
+ */
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    res.json({ 
+      success: true, 
+      user: {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName,
+        photoURL: user.photoURL
+      }
+    });
+  } catch (error: any) {
+    console.error('[Auth Proxy] Login Error:', error.message);
+    res.status(401).json({ success: false, code: error.code, message: error.message });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password, displayName } = req.body;
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    await updateProfile(userCredential.user, { displayName: displayName || '新用户' });
+    const user = userCredential.user;
+    res.json({ 
+      success: true, 
+      user: {
+        uid: user.uid,
+        email: user.email,
+        displayName: displayName || '新用户'
+      }
+    });
+  } catch (error: any) {
+    console.error('[Auth Proxy] Register Error:', error.message);
+    res.status(400).json({ success: false, code: error.code, message: error.message });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    await firebaseSignOut(auth);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 /**
  * --- 坐标转换计算核心 (Mathematics of Coordinate Transformation) ---
