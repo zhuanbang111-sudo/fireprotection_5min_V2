@@ -31,6 +31,13 @@ import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 
+import { createClient } from '@supabase/supabase-js'; // 导入 Supabase 客户端
+
+// 初始化 Supabase 客户端 (支持客户端直接调用，解决 Cloudflare 等纯静态部署问题)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
+
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
 
@@ -86,32 +93,9 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [passcode, setPasscode] = useState(''); // 新增：访客通行码
+  const [passcode, setPasscode] = useState(''); 
   const [displayName, setDisplayName] = useState('');
-
-  // ...
-  const handleVisitorLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!passcode) return setAuthError('请输入访问口令');
-    setAuthError('');
-    setIsLoading(true);
-    try {
-      const response = await axios.post('/api/auth/visitor', { passcode });
-      if (response.data.success) {
-        const userData = response.data.user;
-        setUser(userData);
-        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
-        if (userData.isTrial) {
-          addLog(`✅ 已进入快速试用模式。剩余测算额度: ${userData.remaining} 次`);
-        }
-      }
-    } catch (error: any) {
-      const msg = error.response?.data?.message || '服务器连接失败';
-      setAuthError(msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [isBackendReady, setIsBackendReady] = useState(false);
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -144,18 +128,27 @@ export default function App() {
       try {
         const res = await axios.get('/api/health');
         console.log('[App] Backend health:', res.data);
-        if (typeof res.data === 'string' && res.data.includes('<!doctype html>')) {
-          addLog('🚨 发现环境异常：后端接口返回了 HTML 页面。这通常是因为该域名只有静态前端，没有后端容器在运行。');
-          setAuthError('检测到当前环境仅支持静态页面，无法连接到认证后端。请在 AI Studio 预览或部署正确的 Full-stack 版本。');
-        }
-        if (res.data.supabase === false) {
-          addLog('⚠️ 警告：后端 Supabase 未配置，请在环境变量中设置 SUPABASE_URL 和 SUPABASE_ANON_KEY');
+        
+        // 检查返回的是否是 HTML (通常是 404 或静态转发)
+        const isHtml = typeof res.data === 'string' && res.data.toLowerCase().includes('<!doctype html>');
+        
+        if (isHtml) {
+          addLog('ℹ️ 检测到纯静态环境，将尝试切换至客户端认证模式。');
+          setIsBackendReady(false);
+          if (!supabase) {
+            setAuthError('静态部署缺少配置：请设置 VITE_SUPABASE_ URL/KEY 环境变量。');
+          }
+        } else {
+          setIsBackendReady(true);
+          const envName = res.data.environment === 'cloudflare-pages' ? 'Cloudflare Pages (全栈)' : '自定义 Node.js 后端';
+          addLog(`✅ 后端已就绪：${envName}`);
         }
       } catch (e: any) {
         console.error('[App] Backend connectivity issue:', e);
-        const status = e.response?.status;
-        if (status === 405) {
-          setAuthError('认证服务拒绝请求 (405 Method Not Allowed)。请检查服务器路由配置或尝试刷新页面。');
+        setIsBackendReady(false);
+        addLog('ℹ️ 无法连接到自定义后端，切换至 Supabase 客户端直接模式。');
+        if (!supabase) {
+          setAuthError('认证服务不可用。如果您在 Cloudflare 部署，请确保已设置 VITE_ 环境变量。');
         }
       }
     };
@@ -172,8 +165,31 @@ export default function App() {
     setIsAuthChecking(false);
   }, []);
 
+  const handleVisitorLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passcode) return setAuthError('请输入访问口令');
+    setAuthError('');
+    setIsLoading(true);
+    try {
+      const response = await axios.post('/api/auth/visitor', { passcode });
+      if (response.data.success) {
+        const userData = response.data.user;
+        setUser(userData);
+        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        if (userData.isTrial) {
+          addLog(`✅ 已进入快速试用模式。剩余测算额度: ${userData.remaining} 次`);
+        }
+      }
+    } catch (error: any) {
+      const msg = error.response?.data?.message || '服务器连接失败';
+      setAuthError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleGoogleLogin = () => {
-    setAuthError('由于大陆网络限制，Google 登录目前不可用。请使用邮箱账号登录。');
+    setAuthError('由于领域网络限制，Google 登录目前不可用。请使用邮箱账号登录。');
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -182,26 +198,55 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
-      const response = await axios.post(endpoint, {
-        email,
-        password,
-        displayName
-      });
+      // 优先尝试后端 Proxy (支持隐藏 API Key 及 试用限额)
+      if (isBackendReady) {
+        const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
+        const response = await axios.post(endpoint, {
+          email,
+          password,
+          displayName
+        });
 
-      if (response.data.success) {
-        const userData = response.data.user;
-        setUser(userData);
-        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        if (response.data.success) {
+          const userData = response.data.user;
+          setUser(userData);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+          return;
+        }
       }
+
+      // 如果后端不可用，且配置了前端 Supabase 客户端，则直接调用 (Cloudflare 兼容模式)
+      if (supabase) {
+        addLog('尝试通过前端 Supabase 客户端直接认证...');
+        if (isRegistering) {
+          const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: displayName } }
+          });
+          if (error) throw error;
+          const userData = { uid: data.user?.id, email: data.user?.email, displayName: displayName || '新用户' };
+          setUser(userData);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        } else {
+          const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+          const userData = { 
+            uid: data.user?.id, 
+            email: data.user?.email, 
+            displayName: data.user?.user_metadata?.full_name || data.user?.email 
+          };
+          setUser(userData);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        }
+      } else if (!isBackendReady) {
+        throw new Error('认证服务未就绪且未配置前端环境变量');
+      }
+
     } catch (error: any) {
-      console.error('[Auth Proxy] Error:', error);
+      console.error('[Auth] Error:', error);
       const msg = error.response?.data?.message || error.message || '网络错误，请稍后再试';
-      const status = error.response?.status;
-      
-      if (msg.includes('email-already-in-use')) setAuthError('该邮箱已被注册');
-      else if (msg.includes('invalid-credential')) setAuthError('邮箱或密码错误');
-      else setAuthError(`认证失败 [${status || 'ERR'}]: ${msg}`);
+      setAuthError(`认证失败: ${msg}`);
     } finally {
       setIsLoading(false);
     }
@@ -209,7 +254,12 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await axios.post('/api/auth/logout');
+      if (isBackendReady) {
+        await axios.post('/api/auth/logout');
+      }
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
       setUser(null);
       localStorage.removeItem('fire_isochrone_user');
       setResults([]);
