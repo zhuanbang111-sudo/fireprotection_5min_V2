@@ -253,19 +253,42 @@ export default function App() {
   };
 
   const handleLogout = async () => {
+    setIsLoading(true);
+    addLog('正在退出登录...');
     try {
+      // 同时清理后端 Session 和前端 Client
       if (isBackendReady) {
-        await axios.post('/api/auth/logout');
+        try {
+          await axios.post('/api/auth/logout');
+        } catch (e) {
+          console.warn('Backend logout failed, proceeding with client cleanup');
+        }
       }
+      
       if (supabase) {
         await supabase.auth.signOut();
       }
-      setUser(null);
+
+      // 强制清理本地缓存
       localStorage.removeItem('fire_isochrone_user');
+      // 清理相关业务状态
+      setUser(null);
       setResults([]);
       setStations([]);
+      setAuthError('');
+      
+      addLog('✅ 已安全退出登录');
+      
+      // 这里的逻辑可以根据需要选择：
+      // 1. 刷新页面确保状态彻底重置 (最保险)
+      // window.location.reload();
+      // 2. 或者仅仅重置状态 (体验更好)
+      
     } catch (error) {
       console.error('Logout failed:', error);
+      addLog('❌ 退出过程中出现异常');
+    } finally {
+      setIsLoading(false);
     }
   };
 

@@ -56,6 +56,17 @@ app.post('/auth/register', async (c) => {
   });
 });
 
+// 登出接口
+app.post('/auth/logout', async (c) => {
+  try {
+    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_ANON_KEY);
+    await supabase.auth.signOut();
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message }, 500);
+  }
+});
+
 // 批量路网分析代理 (处理跨域和 Key 隐藏)
 app.post('/analyze', async (c) => {
   const body = await c.req.json();
