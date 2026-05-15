@@ -27,8 +27,7 @@ const apiRouter = express.Router();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// ---【核心优先级修复】API 路由必须放在所有中间件的最前面 ---
-app.use('/api', apiRouter);
+// ---【核心优先级修复】API 路由将在所有路由定义后挂载 ---
 
 // ---【系统认证与限额逻辑】---
 
@@ -626,6 +625,7 @@ apiRouter.post('/calibrate', checkUsageLimit, async (req, res) => {
 });
 
 // 挂载 API 路由到 /api 路径上完成
+app.use('/api', apiRouter);
 
 /**
  * ---【系统运营控制】服务器启动逻辑 ---

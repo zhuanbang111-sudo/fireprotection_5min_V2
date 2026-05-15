@@ -18,6 +18,8 @@ import {
   Database,       // 数据库图标
   FileSpreadsheet, // 表格文件图标
   Calculator,     // 计算器图标
+  RotateCcw,      // 重置图标
+  Pause,          // 暂停图标
   LogIn,          // 登录图标
   LogOut,         // 登出图标
   MessageSquare   // 反馈图标
@@ -137,6 +139,9 @@ export default function App() {
   const [entrySpeed, setEntrySpeed] = useState<number>(3.0); // 地块内部行驶速度 (m/s)
   const [sidebarTab, setSidebarTab] = useState<'analyze' | 'calibrate'>('analyze'); // 侧边栏当前选中的功能页
   const [isAnalyzing, setIsAnalyzing] = useState(false); // 当前是否正在执行分析任务
+  const [isPaused, setIsPaused] = useState(false); // 当前是否处于暂停状态
+  const pauseRef = useRef(false); // 用于中断循环的引用
+  const currentIndexRef = useRef(0); // 当前分析到的索引
   const [isCalibrating, setIsCalibrating] = useState(false); // 当前是否正在执行标定拟合任务
   const [calibrationData, setCalibrationData] = useState<any[]>([]); // 上传的用于标定的历史实测样本
   const [calibrationResult, setCalibrationResult] = useState<any>(null); // 标定拟合后的最优参数结果
@@ -674,16 +679,32 @@ export default function App() {
       return;
     }
 
-    setIsAnalyzing(true); // 开启分析状态（界面会变红并显示 Loading）
-    setResults([]);      // 清理上一次的分析结果
-    setLogs([]);         // 清理上一次的日志
-    addLog('🚀 开始分析...');
+    setIsAnalyzing(true); // 开启分析状态
+    setIsPaused(false);
+    pauseRef.current = false;
 
-    const keyList = apiKeys.split(',').map(k => k.trim()).filter(k => k); // 处理多 Key
-    const newResults: AnalysisResult[] = [];
+    // 如果是从第一位开始，清空之前的结果
+    if (currentIndexRef.current === 0) {
+      setResults([]);
+      setLogs([]);
+      addLog('🚀 开始分析...');
+    } else {
+      addLog('▶️ 继续分析...');
+    }
+
+    const keyList = apiKeys.split(',').map(k => k.trim()).filter(k => k);
 
     // 遍历所有站点依次进行测算
-    for (let i = 0; i < stations.length; i++) {
+    for (let i = currentIndexRef.current; i < stations.length; i++) {
+      // 检查暂停标志
+      if (pauseRef.current) {
+        setIsAnalyzing(false);
+        setIsPaused(true);
+        currentIndexRef.current = i; // 记录当前位置
+        addLog(`⏸ 分析已暂停 (当前第 ${i} 个)`);
+        return;
+      }
+
       const station = stations[i];
       addLog(`📍 正在分析: ${station.station_name} (${i + 1}/${stations.length})`);
 
@@ -705,42 +726,64 @@ export default function App() {
           setUser(prev => prev ? { ...prev, remaining: response.data.remaining } : null);
         }
 
-        const { trailPoints, anchorCount, apiCalls, wgsOrigin } = response.data; // 获取后端仿真出的海量粒子数据
-        const targetSec = (targetMin * 60) / factor; // 换算成路网规划的基础秒数目标
-        const isoGeometry = calculateIsochrone(trailPoints, targetSec); // 在前端执行多点差值算法生成等值多边形
+        const { trailPoints, anchorCount, apiCalls, wgsOrigin } = response.data;
+        const targetSec = (targetMin * 60) / factor;
+        const isoGeometry = calculateIsochrone(trailPoints, targetSec);
 
         if (isoGeometry) {
-          const area = turf.area(isoGeometry) / 1000000; // 计算多边形面积（平方米转平方公里）
-          newResults.push({
+          const area = turf.area(isoGeometry) / 1000000;
+          const newResult: AnalysisResult = {
             station: {
               ...station,
-              lng: wgsOrigin[0], // 存储后端转换后的 WGS84 经度
-              lat: wgsOrigin[1]  // 存储后端转换后的 WGS84 纬度
+              lng: wgsOrigin[0],
+              lat: wgsOrigin[1]
             },
             geometry: isoGeometry,
-            area: Number(area.toFixed(2)), // 保留两位小数
+            area: Number(area.toFixed(2)),
             poiCount: anchorCount,
             apiCalls,
             timestamp: new Date().toLocaleString()
-          });
+          };
+          setResults(prev => [...prev, newResult]);
           addLog(`✅ ${station.station_name} 分析成功，覆盖面积: ${area.toFixed(2)} km²`);
         } else {
           addLog(`⚠️ ${station.station_name} 无法生成等时圈`);
         }
       } catch (error: any) {
-        // 捕获 API 限制或网络错误
         const errorMsg = error.response?.data?.message || error.message;
         addLog(`❌ ${station.station_name} 失败: ${errorMsg}`);
         if (error.response?.status === 403) {
           setAuthError(errorMsg);
-          break; // 停止后续站点分析
+          setIsAnalyzing(false);
+          return;
         }
       }
+      
+      // 更新索引
+      currentIndexRef.current = i + 1;
     }
 
-    setResults(newResults); // 更新结果列表，触发地图和报表渲染
-    setIsAnalyzing(false);  // 结束分析状态
-    addLog(`🎉 分析完成！共 ${newResults.length} 个站点成功`);
+    // 全部完成
+    setIsAnalyzing(false); 
+    setIsPaused(false);
+    currentIndexRef.current = 0; // 重置进度
+    addLog(`🎉 分析完成！`);
+  };
+
+  // 暂停分析
+  const pauseAnalysis = () => {
+    pauseRef.current = true;
+    addLog('正在尝试请求暂停...');
+  };
+
+  // 重置分析（清空所有进度）
+  const resetAnalysis = () => {
+    setIsAnalyzing(false);
+    setIsPaused(false);
+    pauseRef.current = false;
+    currentIndexRef.current = 0;
+    setResults([]);
+    addLog('🔄 分析已重置');
   };
 
   // 导出分析结果为 Excel 报表
@@ -842,8 +885,30 @@ export default function App() {
             <MessageSquare className="w-4 h-4" />
             <span className="hidden md:inline">系统反馈</span>
           </button>
+
+          {/* 重置按钮：仅在分析中或已暂停时显示 */}
+          {(isAnalyzing || isPaused) && (
+            <button
+              onClick={resetAnalysis}
+              className="flex items-center justify-center w-10 h-10 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all border border-slate-200"
+              title="重置进度"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </button>
+          )}
           
-          {/* 开始分析按钮：当正在分析或未加载站点时置灰不可用 */}
+          {/* 暂停按钮：仅在运行中显示 */}
+          {isAnalyzing && (
+            <button
+              onClick={pauseAnalysis}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full font-bold bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all border border-amber-200"
+            >
+              <Pause className="w-4 h-4" />
+              <span>暂停</span>
+            </button>
+          )}
+
+          {/* 开始/继续分析按钮 */}
           <button 
             onClick={runAnalysis}
             disabled={isAnalyzing || stations.length === 0}
@@ -855,7 +920,7 @@ export default function App() {
           >
             {/* 动态显示加载动画或播放图标 */}
             {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-            {isAnalyzing ? '分析中...' : '开始分析'}
+            {isAnalyzing ? '分析中...' : (isPaused ? '继续分析' : '开始分析')}
           </button>
         </div>
       </header>
