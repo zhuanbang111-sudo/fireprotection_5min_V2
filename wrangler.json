@@ -1,0 +1,13 @@
+{
+  "name": "fireprotection-5min-v2",
+  "main": "dist/worker.js",
+  "compatibility_date": "2024-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

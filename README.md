@@ -71,16 +71,17 @@
 - 分析过程涉及大量路网计算，请关注当日 API 配额剩余情况。
 - **导出 SHP 文件**：默认为 WGS-84 地球标准坐标系。
 
-## 🌐 部署与分享
-若您计划分享此应用：
+## 🌐 部署与分享 (Cloudflare / Workers)
+本应用已适配 Cloudflare Workers + Assets 全栈部署模式。
 
-1. **设置 Supabase 环境变量**：
-   - 登录 [Supabase 控制台](https://supabase.com/)。
-   - 创建新项目并获取 `API URL` 和 `anon key`。
-   - 在 `.env` 中配置 `SUPABASE_URL` 和 `SUPABASE_ANON_KEY`。
-2. **重定向处理**：
-   - 确保您的托管平台支持单页应用（SPA）路由重定向到 `index.html`。
-3. **API 秘钥安全**：
+1. **解锁环境变量**：
+   - 确保 `wrangler.json` 中配置了 `"main": "dist/worker.js"`。
+   - 在 Cloudflare 控制台的 **Settings > Variables** 中，你现在可以正常添加 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 和 `AMAP_KEYS` 了。
+2. **构建命令**：
+   - 使用 `npm run build` 生成 `dist` 目录。
+   - 使用 `npx wrangler deploy` 或在控制台上传 `dist` 文件夹。
+3. **重要提示**：
+   - 如果遇到 405 错误，请检查 `wrangler.json` 是否正确上传，它决定了 Cloudflare 是将应用视为“图片站”还是“全栈站”。
    - 请在侧边栏填入您个人的高德 API Key。系统不会持久化存储您的秘钥。
 
 ## 许可证
