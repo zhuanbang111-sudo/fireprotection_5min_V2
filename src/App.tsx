@@ -30,6 +30,7 @@ import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
+import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
 import { createClient } from '@supabase/supabase-js'; // 导入 Supabase 客户端
 
@@ -121,16 +122,29 @@ export default function App() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
+  // --- 使用 React Query 检查后端健康状态 ---
+  const { data: healthData, error: healthFetchError, isFetched: isHealthFetched } = useQuery({
+    queryKey: ['backendHealth'],
+    queryFn: async () => {
+      const res = await axios.get('/api/health');
+      return res.data;
+    },
+    staleTime: 5 * 60 * 1000, // 5分钟内不重复检查
+    retry: 1,
+  });
+
   // --- 监听 Auth 变化 (本地 Session 模拟) ---
   useEffect(() => {
-    const checkConnectivity = async () => {
-      try {
-        const res = await axios.get('/api/health');
-        console.log('[App] Backend health:', res.data);
-        
-        // 检查返回的是否是 HTML (通常是 404 或静态转发)
-        const isHtml = typeof res.data === 'string' && res.data.toLowerCase().includes('<!doctype html>');
-        
+    if (isHealthFetched) {
+      if (healthFetchError) {
+        console.error('[App] Backend connectivity issue:', healthFetchError);
+        setIsBackendReady(false);
+        addLog('ℹ️ 无法连接到自定义后端，切换至 Supabase 客户端直接模式。');
+        if (!supabase) {
+          setAuthError('认证服务不可用。如果您在 Cloudflare 部署，请确保已设置 VITE_ 环境变量。');
+        }
+      } else if (healthData) {
+        const isHtml = typeof healthData === 'string' && healthData.toLowerCase().includes('<!doctype html>');
         if (isHtml) {
           addLog('ℹ️ 检测到纯静态环境，将尝试切换至客户端认证模式。');
           setIsBackendReady(false);
@@ -139,19 +153,13 @@ export default function App() {
           }
         } else {
           setIsBackendReady(true);
-          const envName = res.data.environment === 'cloudflare-pages' ? 'Cloudflare Pages (全栈)' : '自定义 Node.js 后端';
+          const envName = healthData.environment === 'cloudflare-pages' || healthData.environment === 'cloudflare-workers' 
+            ? 'Cloudflare 全栈架构' 
+            : '自定义 Node.js 后端';
           addLog(`✅ 后端已就绪：${envName}`);
         }
-      } catch (e: any) {
-        console.error('[App] Backend connectivity issue:', e);
-        setIsBackendReady(false);
-        addLog('ℹ️ 无法连接到自定义后端，切换至 Supabase 客户端直接模式。');
-        if (!supabase) {
-          setAuthError('认证服务不可用。如果您在 Cloudflare 部署，请确保已设置 VITE_ 环境变量。');
-        }
       }
-    };
-    checkConnectivity();
+    }
 
     const savedUser = localStorage.getItem('fire_isochrone_user');
     if (savedUser) {
@@ -162,7 +170,7 @@ export default function App() {
       }
     }
     setIsAuthChecking(false);
-  }, []);
+  }, [healthData, healthFetchError, isHealthFetched]);
 
   const handleGoogleLogin = () => {
     setAuthError('由于领域网络限制，Google 登录目前不可用。请使用邮箱账号登录。');
