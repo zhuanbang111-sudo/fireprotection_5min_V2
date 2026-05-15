@@ -110,7 +110,7 @@ export default function App() {
   // 获取/刷新验证码
   const refreshCaptcha = async () => {
     try {
-      const response = await axios.get('/api/auth/captcha');
+      const response = await axios.get('/api/captcha');
       if (response.data.success) {
         setCaptchaId(response.data.id);
         setCaptchaImage(response.data.data);

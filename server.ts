@@ -6,8 +6,19 @@ import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览�
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
 import { createClient } from '@supabase/supabase-js';
+import svgCaptcha from 'svg-captcha';
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
+
+// ---【全局状态存储】---
+const demoUsageMap = new Map<string, number>();
+const MAX_DEMO_USAGE = 5;
+
+interface CaptchaData {
+  text: string;
+  expires: number;
+}
+const captchaStore: Record<string, CaptchaData> = {};
 
 // 初始化 Supabase
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -24,16 +35,48 @@ const app = express();
 const PORT = 3000;
 const apiRouter = express.Router();
 
+// ---【调试】apiRouter 内部中间件 ---
+apiRouter.use((req, res, next) => {
+  console.log(`[DEBUG] apiRouter internal path: ${req.path}`);
+  next();
+});
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// ---【安全验证】验证码直接挂载到 app 上确保优先级 ---
+app.get('/api/captcha', (req, res) => {
+  console.log(`[DEBUG] Handing direct /api/captcha request`);
+  const captcha = svgCaptcha.create({
+    size: 4,
+    ignoreChars: '0o1i',
+    noise: 2,
+    color: true,
+    background: '#f8fafc'
+  });
+  
+  const id = Math.random().toString(36).substring(2, 11);
+  captchaStore[id] = {
+    text: captcha.text.toLowerCase(),
+    expires: Date.now() + 300000 // 5分钟有效期
+  };
+  
+  res.json({
+    success: true,
+    id: id,
+    data: captcha.data // SVG 字符串
+  });
+});
+
+// ---【调试】打印所有进入 /api 的请求 ---
+app.all('/api/*', (req, res, next) => {
+  console.log(`[DEBUG] Incoming API request: ${req.method} ${req.url} (full path: ${req.path})`);
+  next();
+});
 
 // ---【核心优先级修复】API 路由将在所有路由定义后挂载 ---
 
 // ---【系统认证与限额逻辑】---
-
-// 内存中维护演示账户的限额（生产环境建议配合数据库存储，当前为演示版本）
-const demoUsageMap = new Map<string, number>();
-const MAX_DEMO_USAGE = 5;
 
 // 校验限额的中间件
 const checkUsageLimit = (req: any, res: any, next: any) => {
@@ -156,48 +199,6 @@ apiRouter.all('/health', (req, res) => {
   });
 });
 
-import svgCaptcha from 'svg-captcha';
-
-// ---【安全验证】验证码内存存储 (生产环境建议使用 Redis) ---
-interface CaptchaData {
-  text: string;
-  expires: number;
-}
-const captchaStore: Record<string, CaptchaData> = {};
-
-// 清理过期验证码 (每分钟运行一次)
-setInterval(() => {
-  const now = Date.now();
-  Object.keys(captchaStore).forEach(id => {
-    if (captchaStore[id].expires < now) delete captchaStore[id];
-  });
-}, 60000);
-
-/**
- * ---【安全验证】获取验证码接口 ---
- */
-apiRouter.get('/auth/captcha', (req, res) => {
-  const captcha = svgCaptcha.create({
-    size: 4,
-    ignoreChars: '0o1i',
-    noise: 2,
-    color: true,
-    background: '#f8fafc'
-  });
-  
-  const id = Math.random().toString(36).substring(2, 11);
-  captchaStore[id] = {
-    text: captcha.text.toLowerCase(),
-    expires: Date.now() + 300000 // 5分钟有效期
-  };
-  
-  res.json({
-    success: true,
-    id: id,
-    data: captcha.data // SVG 字符串
-  });
-});
-
 /**
  * ---【用户反馈】反馈提交接口 ---
  */
@@ -239,6 +240,15 @@ apiRouter.post('/feedback', async (req, res) => {
     res.status(500).json({ success: false, message: '服务器忙，请稍后再试。' });
   }
 });
+
+// 清理过期验证码 (每分钟运行一次)
+setInterval(() => {
+  if (!captchaStore || Object.keys(captchaStore).length === 0) return;
+  const now = Date.now();
+  Object.keys(captchaStore).forEach(id => {
+    if (captchaStore[id].expires < now) delete captchaStore[id];
+  });
+}, 60000);
 
 /**
  * --- 坐标转换计算核心 (Mathematics of Coordinate Transformation) ---
@@ -625,12 +635,15 @@ apiRouter.post('/calibrate', checkUsageLimit, async (req, res) => {
 });
 
 // 挂载 API 路由到 /api 路径上完成
-app.use('/api', apiRouter);
+// app.use('/api', apiRouter); // 已移入 startServer 内部以确保优先级
 
 /**
  * ---【系统运营控制】服务器启动逻辑 ---
  */
 async function startServer() {
+  // ---【关键修复】API 路由必须在静态资源和 Vite 中间件之前挂载 ---
+  app.use('/api', apiRouter);
+  
   // 打印注册好的路由，方便调试
   console.log('[DEBUG] Active routes:');
   apiRouter.stack.forEach((r: any) => {
