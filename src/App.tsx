@@ -1147,17 +1147,17 @@ export default function App() {
                 {/* 1. 天地图矢量路网底图（默认选中） */}
                 <LayersControl.BaseLayer checked name="天地图矢量">
                   <TileLayer
-                    url={`http://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
+                    url={`https://t{s}.tianditu.gov.cn/vec_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=vec&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
                     subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
-                    attribution='&copy; <a href="http://www.tianditu.gov.cn/">天地图</a>'
+                    attribution='&copy; <a href="https://www.tianditu.gov.cn/">天地图</a>'
                   />
                 </LayersControl.BaseLayer>
                 {/* 2. 天地图卫星影像图 */}
                 <LayersControl.BaseLayer name="天地图影像">
                   <TileLayer
-                    url={`http://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
+                    url={`https://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
                     subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
-                    attribution='&copy; <a href="http://www.tianditu.gov.cn/">天地图</a>'
+                    attribution='&copy; <a href="https://www.tianditu.gov.cn/">天地图</a>'
                   />
                 </LayersControl.BaseLayer>
                 {/* 3. 开源 OpenStreetMap 底图 */}
@@ -1171,42 +1171,47 @@ export default function App() {
                 {/* 天地图文字标注层（叠加在底图之上显示地名） */}
                 <LayersControl.Overlay checked name="标注">
                   <TileLayer
-                    url={`http://t{s}.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
+                    url={`https://t{s}.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${TIANDITU_KEY}`}
                     subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
                   />
                 </LayersControl.Overlay>
+
+                {/* 渲染分析结果：在地图上绘制站点图标和等时圈图形 */}
+                {results.map((res, i) => (
+                  <LayersControl.Overlay key={`result-overlay-${res.station.station_name}-${i}`} checked name={res.station.station_name}>
+                    {/* 站点坐标标记 (Marker) */}
+                    <Marker 
+                      key={`marker-${res.station.station_name}-${i}`}
+                      position={[res.station.lat, res.station.lng]} 
+                      icon={fireIcon}
+                    >
+                      {/* 点击图标弹出的详细信息框 */}
+                      <Popup>
+                        <div className="p-1">
+                          <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
+                          <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                    {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
+                    <GeoJSON 
+                      key={`iso-${res.station.station_name}-${i}-${res.timestamp}`}
+                      data={res.geometry} 
+                      style={{
+                        fillColor: '#ef4444', // 填充红色
+                        fillOpacity: 0.35,   // 稍微提高透明度增强对比
+                        color: '#b91c1c',     // 边框深红
+                        weight: 3,           // 加粗边框
+                        lineJoin: 'round',    // 圆角连接
+                        opacity: 0.8          // 边框不透明度
+                      }} 
+                    />
+                  </LayersControl.Overlay>
+                ))}
               </LayersControl>
 
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
               <MapUpdater center={mapCenter} /> {/* 当中心点状态改变时手动平移地图 */}
-              
-              {/* 渲染分析结果：在地图上绘制站点图标和等时圈图形 */}
-              {results.map((res, i) => (
-                <React.Fragment key={i}>
-                  {/* 站点坐标标记 (Marker) */}
-                  <Marker position={[res.station.lat, res.station.lng]} icon={fireIcon}>
-                    {/* 点击图标弹出的详细信息框 */}
-                    <Popup>
-                      <div className="p-1">
-                        <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
-                        <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
-                      </div>
-                    </Popup>
-                  </Marker>
-                  {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
-                  <GeoJSON 
-                    data={res.geometry} 
-                    style={{
-                      fillColor: '#ef4444', // 填充红色
-                      fillOpacity: 0.35,   // 稍微提高透明度增强对比
-                      color: '#b91c1c',     // 边框深红
-                      weight: 3,           // 加粗边框
-                      lineJoin: 'round',    // 圆角连接
-                      opacity: 0.8          // 边框不透明度
-                    }} 
-                  />
-                </React.Fragment>
-              ))}
             </MapContainer>
           </div>
 
