@@ -93,6 +93,41 @@ const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 
 const MAX_DEMO_USAGE = 5;
 
+// --- 全局网络引擎配置 (Axios Interceptor) ---
+// 逻辑：每次发起请求前，自动检查本地是否有有效的会话令牌，并将其注入 Authorization 头部。
+// 同时处理 401 错误，实现自动登出跳转。
+axios.interceptors.request.use((config) => {
+  const savedUser = localStorage.getItem('fire_isochrone_user');
+  if (savedUser) {
+    try {
+      const parsed = JSON.parse(savedUser);
+      // 如果存在 JWT 令牌，则使用标准 Bearer 格式
+      if (parsed.session?.access_token) {
+        config.headers.Authorization = `Bearer ${parsed.session.access_token}`;
+      }
+      // 保留原有的 x-user-id 用于演示账号兼容
+      config.headers['x-user-id'] = parsed.uid;
+    } catch (e) {}
+  }
+  return config;
+}, (error) => Promise.reject(error));
+
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      console.warn('[Session] 会话已过期，正在清理...');
+      localStorage.removeItem('fire_isochrone_user');
+      // 仅在已登录状态下发生 401 时刷新，避免死循环
+      if (localStorage.getItem('fire_isochrone_user_active')) {
+        localStorage.removeItem('fire_isochrone_user_active');
+        window.location.reload();
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
 export default function App() {
   const [user, setUser] = useState<any | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
@@ -100,33 +135,9 @@ export default function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [captchaId, setCaptchaId] = useState('');
-  const [captchaImage, setCaptchaImage] = useState('');
-  const [captchaText, setCaptchaText] = useState('');
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isBackendReady, setIsBackendReady] = useState(false);
-
-  // 获取/刷新验证码
-  const refreshCaptcha = async () => {
-    try {
-      const response = await axios.get('/api/captcha');
-      if (response.data.success) {
-        setCaptchaId(response.data.id);
-        setCaptchaImage(response.data.data);
-        setCaptchaText(''); // 刷新后清空输入
-      }
-    } catch (err) {
-      console.error('Failed to get captcha:', err);
-    }
-  };
-
-  // 切换注册/登录时刷新验证码
-  useEffect(() => {
-    if (isRegistering && isBackendReady) {
-      refreshCaptcha();
-    }
-  }, [isRegistering, isBackendReady]);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -233,8 +244,13 @@ export default function App() {
 
       const res = await axios.post('/api/auth/instant', { trialId });
       if (res.data.success) {
-        setUser(res.data.user);
-        localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
+        const userData = {
+          ...res.data.user,
+          session: res.data.session // 演示账号可能没有 session，但保留结构一致性
+        };
+        setUser(userData);
+        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+        localStorage.setItem('fire_isochrone_user_active', 'true');
         addLog(`🚀 试用模式启动！剩余试用额度: ${res.data.user.remaining} 次`);
       }
     } catch (e: any) {
@@ -257,15 +273,17 @@ export default function App() {
         const response = await axios.post(endpoint, {
           email,
           password,
-          displayName,
-          captchaId,
-          captchaText
+          displayName
         });
 
         if (response.data.success) {
-          const userData = response.data.user;
+          const userData = {
+            ...response.data.user,
+            session: response.data.session
+          };
           setUser(userData);
           localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+          localStorage.setItem('fire_isochrone_user_active', 'true');
           addLog(`✅ 欢迎回来, ${userData.displayName}`);
           return;
         }
@@ -304,10 +322,6 @@ export default function App() {
       console.error('[Auth] Error:', error);
       const msg = error.response?.data?.message || error.message || '网络错误，请稍后再试';
       setAuthError(`认证失败: ${msg}`);
-      // 注册失败时强制刷新验证码
-      if (isRegistering) {
-        refreshCaptcha();
-      }
     } finally {
       setIsLoading(false);
     }
@@ -332,6 +346,7 @@ export default function App() {
 
       // 强制清理本地缓存
       localStorage.removeItem('fire_isochrone_user');
+      localStorage.removeItem('fire_isochrone_user_active');
       
       addLog('✅ 已安全退出登录');
       
@@ -459,28 +474,6 @@ export default function App() {
                   />
                 </div>
 
-                {isRegistering && isBackendReady && (
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">验证码</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="text" 
-                        value={captchaText}
-                        onChange={(e) => setCaptchaText(e.target.value)}
-                        placeholder="请输入验证码"
-                        required
-                        maxLength={4}
-                        className="flex-1 h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-500"
-                      />
-                      <div 
-                        onClick={refreshCaptcha}
-                        className="w-28 h-12 bg-white rounded-xl overflow-hidden cursor-pointer hover:opacity-80 transition-opacity flex items-center justify-center border border-white/20"
-                        dangerouslySetInnerHTML={{ __html: captchaImage }}
-                      />
-                    </div>
-                  </div>
-                )}
-
                 {authError && (
                   <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-3 rounded-xl border border-red-400/20">
                     <AlertCircle className="w-3.5 h-3.5" />
@@ -577,8 +570,6 @@ export default function App() {
         apiKeys: keyList,
         samples,
         coordSystem: calibrationCoordSystem
-      }, {
-        headers: { 'x-user-id': user?.uid }
       });
 
       if (response.data.remaining !== undefined) {
@@ -718,8 +709,6 @@ export default function App() {
           coordSystem,                       // 坐标系标识
           entrySpeed,                        // 地块内部速
           entryPenalty: 0                     // (已移除该功能)
-        }, {
-          headers: { 'x-user-id': user?.uid }
         });
 
         if (response.data.remaining !== undefined) {

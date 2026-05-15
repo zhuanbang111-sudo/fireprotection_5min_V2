@@ -6,19 +6,12 @@ import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览�
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
 import { createClient } from '@supabase/supabase-js';
-import svgCaptcha from 'svg-captcha';
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
 // ---【全局状态存储】---
 const demoUsageMap = new Map<string, number>();
 const MAX_DEMO_USAGE = 5;
-
-interface CaptchaData {
-  text: string;
-  expires: number;
-}
-const captchaStore: Record<string, CaptchaData> = {};
 
 // 初始化 Supabase
 const supabaseUrl = process.env.SUPABASE_URL || '';
@@ -44,30 +37,6 @@ apiRouter.use((req, res, next) => {
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// ---【安全验证】验证码直接挂载到 app 上确保优先级 ---
-app.get('/api/captcha', (req, res) => {
-  console.log(`[DEBUG] Handing direct /api/captcha request`);
-  const captcha = svgCaptcha.create({
-    size: 4,
-    ignoreChars: '0o1i',
-    noise: 2,
-    color: true,
-    background: '#f8fafc'
-  });
-  
-  const id = Math.random().toString(36).substring(2, 11);
-  captchaStore[id] = {
-    text: captcha.text.toLowerCase(),
-    expires: Date.now() + 300000 // 5分钟有效期
-  };
-  
-  res.json({
-    success: true,
-    id: id,
-    data: captcha.data // SVG 字符串
-  });
-});
-
 // ---【调试】打印所有进入 /api 的请求 ---
 app.all('/api/*', (req, res, next) => {
   console.log(`[DEBUG] Incoming API request: ${req.method} ${req.url} (full path: ${req.path})`);
@@ -78,9 +47,12 @@ app.all('/api/*', (req, res, next) => {
 
 // ---【系统认证与限额逻辑】---
 
-// 校验限额的中间件
-const checkUsageLimit = (req: any, res: any, next: any) => {
-  const userId = req.headers['x-user-id'] as string; // 我们约定前端在请求头中传递 uid
+// 校验限额的中间件 (支持 Trial 与 Registered 用户)
+const checkUsageLimit = async (req: any, res: any, next: any) => {
+  const userId = req.headers['x-user-id'] as string; 
+  const authHeader = req.headers['authorization'];
+  
+  // 1. 如果是演示账号 (UID 以 demo- 开头)
   if (userId && userId.startsWith('demo-')) {
     const currentCount = demoUsageMap.get(userId) || 0;
     if (currentCount >= MAX_DEMO_USAGE) {
@@ -92,9 +64,31 @@ const checkUsageLimit = (req: any, res: any, next: any) => {
     const newCount = currentCount + 1;
     demoUsageMap.set(userId, newCount);
     res.locals.remaining = MAX_DEMO_USAGE - newCount;
-    console.log(`[Limit] Demo user ${userId} usage: ${newCount}/${MAX_DEMO_USAGE}`);
+    return next();
   }
-  next();
+
+  // 2. 如果是注册用户 (必须携带有效的 Authorization Bearer Token)
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const { data: { user }, error } = await supabase.auth.getUser(token);
+      if (error || !user) throw new Error('无效的会话，请重新登录');
+      
+      // 验证令牌中的用户 ID 与请求头中声明的是否一致（防止 ID 篡改）
+      if (userId && user.id !== userId) {
+        return res.status(403).json({ success: false, message: '身份验证冲突，操作被拒绝' });
+      }
+
+      // 将用户信息存入本地，后续逻辑可用
+      res.locals.user = user;
+      res.locals.remaining = Infinity; // 注册用户暂不限制次数 (或后续可对接计划)
+      return next();
+    } catch (e: any) {
+      return res.status(401).json({ success: false, message: e.message });
+    }
+  }
+
+  return res.status(401).json({ success: false, message: '请登录后继续操作' });
 };
 
 // 途径 1: 极致简单的“一键演示”通道
@@ -122,8 +116,10 @@ apiRouter.post('/auth/login', async (req, res) => {
   try {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+    
     res.json({ 
       success: true, 
+      session: data.session, // 包含 access_token 和 refresh_token
       user: { 
         uid: data.user.id, 
         email: data.user.email, 
@@ -137,24 +133,7 @@ apiRouter.post('/auth/login', async (req, res) => {
 
 apiRouter.post('/auth/register', async (req, res) => {
   if (!supabaseUrl) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
-  const { email, password, displayName, captchaId, captchaText } = req.body;
-
-  // 1. 验证码校验
-  if (!captchaId || !captchaText) {
-    return res.status(400).json({ success: false, message: '请输入验证码' });
-  }
-
-  const stored = captchaStore[captchaId];
-  if (!stored || stored.expires < Date.now()) {
-    return res.status(400).json({ success: false, message: '验证码已过期，请点击图片刷新' });
-  }
-
-  if (stored.text !== captchaText.toLowerCase()) {
-    return res.status(400).json({ success: false, message: '验证码不正确' });
-  }
-
-  // 验证后立即删除，防止重用
-  delete captchaStore[captchaId];
+  const { email, password, displayName } = req.body;
 
   try {
     const { data, error } = await supabase.auth.signUp({ 
@@ -168,8 +147,10 @@ apiRouter.post('/auth/register', async (req, res) => {
     });
     if (error) throw error;
     if (!data.user) throw new Error('注册未返回用户信息');
+    
     res.json({ 
       success: true, 
+      session: data.session, // 包含首次会话
       user: { 
         uid: data.user.id, 
         email: data.user.email, 
@@ -240,15 +221,6 @@ apiRouter.post('/feedback', async (req, res) => {
     res.status(500).json({ success: false, message: '服务器忙，请稍后再试。' });
   }
 });
-
-// 清理过期验证码 (每分钟运行一次)
-setInterval(() => {
-  if (!captchaStore || Object.keys(captchaStore).length === 0) return;
-  const now = Date.now();
-  Object.keys(captchaStore).forEach(id => {
-    if (captchaStore[id].expires < now) delete captchaStore[id];
-  });
-}, 60000);
 
 /**
  * --- 坐标转换计算核心 (Mathematics of Coordinate Transformation) ---
