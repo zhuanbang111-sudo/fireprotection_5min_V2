@@ -34,7 +34,7 @@ app.use('/api', apiRouter);
 
 // 内存中维护演示账户的限额（生产环境建议配合数据库存储，当前为演示版本）
 let demoUsageCount = 0;
-const MAX_DEMO_USAGE = 10;
+const MAX_DEMO_USAGE = 5;
 
 // 校验限额的中间件
 const checkUsageLimit = (req: any, res: any, next: any) => {
@@ -67,22 +67,7 @@ apiRouter.post('/auth/instant', (req, res) => {
   });
 });
 
-// 途径 2: 访客定制多口令清单 (支持有效期)
-const VALID_PASSCODES = [
-  { code: 'fire2024', name: '普通访客', expiry: '2026-12-31' },
-  { code: 'vip888', name: '高级专家', expiry: '2027-01-01' },
-  { code: 'test001', name: '临时测试', expiry: '2026-05-15' }
-];
-
-apiRouter.post('/auth/visitor', (req, res) => {
-  const { passcode } = req.body;
-  const match = VALID_PASSCODES.find(p => p.code === passcode);
-  if (!match) return res.status(401).json({ success: false, message: '口令无效' });
-  if (new Date() > new Date(match.expiry)) return res.status(403).json({ success: false, message: '口令已过期' });
-  res.json({ success: true, user: { uid: `v-${match.code}`, email: `${match.code}@local`, displayName: match.name } });
-});
-
-// 途径 3: Supabase 认证中转代理
+// 途径 2: Supabase 认证中转代理
 apiRouter.post('/auth/login', async (req, res) => {
   if (!supabaseUrl) return res.status(503).json({ success: false, message: '认证中转服务未启动' });
   const { email, password } = req.body;
