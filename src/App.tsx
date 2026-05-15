@@ -19,7 +19,8 @@ import {
   FileSpreadsheet, // 表格文件图标
   Calculator,     // 计算器图标
   LogIn,          // 登录图标
-  LogOut          // 登出图标
+  LogOut,         // 登出图标
+  MessageSquare   // 反馈图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
 import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
@@ -33,6 +34,7 @@ import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
 import { createClient } from '@supabase/supabase-js'; // 导入 Supabase 客户端
+import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
 
 // 初始化 Supabase 客户端 (支持客户端直接调用，解决 Cloudflare 等纯静态部署问题)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -87,17 +89,42 @@ function MapUpdater({ center }: { center: [number, number] }) {
 
 const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 
+const MAX_DEMO_USAGE = 5;
+
 export default function App() {
-// --- 权限相关状态 ---
   const [user, setUser] = useState<any | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [isBackendReady, setIsBackendReady] = useState(false);
+  const [captchaId, setCaptchaId] = useState('');
+  const [captchaImage, setCaptchaImage] = useState('');
+  const [captchaText, setCaptchaText] = useState('');
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isBackendReady, setIsBackendReady] = useState(false);
+
+  // 获取/刷新验证码
+  const refreshCaptcha = async () => {
+    try {
+      const response = await axios.get('/api/auth/captcha');
+      if (response.data.success) {
+        setCaptchaId(response.data.id);
+        setCaptchaImage(response.data.data);
+        setCaptchaText(''); // 刷新后清空输入
+      }
+    } catch (err) {
+      console.error('Failed to get captcha:', err);
+    }
+  };
+
+  // 切换注册/登录时刷新验证码
+  useEffect(() => {
+    if (isRegistering && isBackendReady) {
+      refreshCaptcha();
+    }
+  }, [isRegistering, isBackendReady]);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -116,6 +143,17 @@ export default function App() {
   const [results, setResults] = useState<AnalysisResult[]>([]); // 存储分析成功的站点结果
   const [logs, setLogs] = useState<string[]>([]); // 存储运行过程中的实时日志消息
   const [activeTab, setActiveTab] = useState<'map' | 'stats'>('map'); // 主视图当前显示的页面（地图或报表）
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false); // 反馈弹窗开关
+  const [showUrgentPrompt, setShowUrgentPrompt] = useState(false); // 是否显示额度告急提示
+
+  // 监听试用额度，在最后一次时提醒
+  useEffect(() => {
+    if (user?.isTrial && user?.remaining === 1) {
+      setShowUrgentPrompt(true);
+    } else {
+      setShowUrgentPrompt(false);
+    }
+  }, [user?.remaining, user?.isTrial]);
 
   // 添加一条带时间戳的日志
   const addLog = (msg: string) => {
@@ -172,8 +210,34 @@ export default function App() {
     setIsAuthChecking(false);
   }, [healthData, healthFetchError, isHealthFetched]);
 
-  const handleGoogleLogin = () => {
-    setAuthError('由于领域网络限制，Google 登录目前不可用。请使用邮箱账号登录。');
+  const handleInstantTrial = async () => {
+    setIsLoading(true);
+    setAuthError('');
+    try {
+      // 尝试从本地缓存恢复试用 ID，以便维持计次
+      const savedUser = localStorage.getItem('fire_isochrone_user');
+      let trialId = null;
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (parsed.uid && parsed.uid.startsWith('demo-')) {
+            trialId = parsed.uid;
+          }
+        } catch (e) {}
+      }
+
+      const res = await axios.post('/api/auth/instant', { trialId });
+      if (res.data.success) {
+        setUser(res.data.user);
+        localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
+        addLog(`🚀 试用模式启动！剩余试用额度: ${res.data.user.remaining} 次`);
+      }
+    } catch (e: any) {
+      console.error('[Auth] Instant trial error:', e);
+      setAuthError(e.response?.data?.message || '快速进入服务暂时不可用');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -188,20 +252,22 @@ export default function App() {
         const response = await axios.post(endpoint, {
           email,
           password,
-          displayName
+          displayName,
+          captchaId,
+          captchaText
         });
 
         if (response.data.success) {
           const userData = response.data.user;
           setUser(userData);
           localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
+          addLog(`✅ 欢迎回来, ${userData.displayName}`);
           return;
         }
       }
 
-      // 如果后端不可用，且配置了前端 Supabase 客户端，则直接调用 (Cloudflare 兼容模式)
+      // 如果后端不可用，且配置了前端 Supabase 客户端，则直接调用 (静态部署模式)
       if (supabase) {
-        addLog('尝试通过前端 Supabase 客户端直接认证...');
         if (isRegistering) {
           const { data, error } = await supabase.auth.signUp({
             email,
@@ -209,16 +275,18 @@ export default function App() {
             options: { data: { full_name: displayName } }
           });
           if (error) throw error;
-          const userData = { uid: data.user?.id, email: data.user?.email, displayName: displayName || '新用户' };
+          if (!data.user) throw new Error('注册未返回用户信息');
+          const userData = { uid: data.user.id, email: data.user.email, displayName: displayName || '新用户' };
           setUser(userData);
           localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
         } else {
           const { data, error } = await supabase.auth.signInWithPassword({ email, password });
           if (error) throw error;
+          if (!data.user) throw new Error('登录未返回用户信息');
           const userData = { 
-            uid: data.user?.id, 
-            email: data.user?.email, 
-            displayName: data.user?.user_metadata?.full_name || data.user?.email 
+            uid: data.user.id, 
+            email: data.user.email, 
+            displayName: data.user.user_metadata?.full_name || data.user.email 
           };
           setUser(userData);
           localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
@@ -231,6 +299,10 @@ export default function App() {
       console.error('[Auth] Error:', error);
       const msg = error.response?.data?.message || error.message || '网络错误，请稍后再试';
       setAuthError(`认证失败: ${msg}`);
+      // 注册失败时强制刷新验证码
+      if (isRegistering) {
+        refreshCaptcha();
+      }
     } finally {
       setIsLoading(false);
     }
@@ -255,18 +327,12 @@ export default function App() {
 
       // 强制清理本地缓存
       localStorage.removeItem('fire_isochrone_user');
-      // 清理相关业务状态
-      setUser(null);
-      setResults([]);
-      setStations([]);
-      setAuthError('');
       
       addLog('✅ 已安全退出登录');
       
-      // 这里的逻辑可以根据需要选择：
-      // 1. 刷新页面确保状态彻底重置 (最保险)
-      // window.location.reload();
-      // 2. 或者仅仅重置状态 (体验更好)
+      // 这里的策略优化：直接刷新页面，不手动 setUser(null)
+      // 这样可以避免 React 在页面刷新前尝试 unmount 地图组件时可能产生的 DOM 冲突
+      window.location.reload();
       
     } catch (error) {
       console.error('Logout failed:', error);
@@ -312,23 +378,23 @@ export default function App() {
                 <MapIcon className="w-8 h-8 text-white" />
               </div>
               <h1 className="text-2xl font-black text-white tracking-tight mt-4">
-                FireIsochrone <span className="text-red-500">Pro V2</span>
+                FireIsochrone <span className="text-red-500">PRO V2</span>
               </h1>
               <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
-                {isRegistering ? '创建您的分析账户' : '消防仿真系统登录'}
+                {isRegistering ? '立即创建您的账号' : '消防仿真系统授权登录'}
               </p>
             </div>
 
             <div className="space-y-4">
-              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-4 text-center">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-2 text-center">
                 <p className="text-[10px] text-amber-200/80 leading-relaxed">
                   <span className="font-bold text-amber-400">💡 提示：</span>
-                  演示目的请使用<span className="text-white font-bold ml-1">“快速试用”</span>直接进入系统。
+                  演示目的请点击“快速试用”直接进入，无需注册。
                 </p>
               </div>
 
               {/* 选项卡切换 */}
-              <div className="flex bg-white/5 p-1 rounded-lg border border-white/10 mb-2">
+              <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
                 <button 
                   onClick={() => { setIsRegistering(false); setAuthError(''); }}
                   className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${!isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
@@ -342,24 +408,8 @@ export default function App() {
                   注册
                 </button>
                 <button 
-                  onClick={async () => {
-                    setIsLoading(true);
-                    try {
-                      const res = await axios.post('/api/auth/instant');
-                      if (res.data.success) {
-                        setUser(res.data.user);
-                        localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
-                        if (res.data.user.isTrial) {
-                          addLog(`🚀 快速进入成功！剩余试用额度: ${res.data.user.remaining} 次`);
-                        }
-                      }
-                    } catch (e: any) {
-                      setAuthError(e.response?.data?.message || '快速进入服务暂时不可用');
-                    } finally {
-                      setIsLoading(false);
-                    }
-                  }}
-                  className="flex-1 py-1.5 text-[11px] font-bold rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all"
+                  onClick={handleInstantTrial}
+                  className="flex-1 py-1.5 text-[11px] font-bold rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-mono"
                 >
                   快速试用
                 </button>
@@ -368,12 +418,12 @@ export default function App() {
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {isRegistering && (
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">用户名</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">用户名 (姓名/单位)</label>
                     <input 
                       type="text" 
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="您的姓名或部门"
+                      placeholder="您的姓名"
                       required={isRegistering}
                       className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
                     />
@@ -381,7 +431,7 @@ export default function App() {
                 )}
                 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">电子邮箱</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">电子邮箱</label>
                   <input 
                     type="email" 
                     value={email}
@@ -393,7 +443,7 @@ export default function App() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">登录密码</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">登录密码</label>
                   <input 
                     type="password" 
                     value={password}
@@ -403,6 +453,28 @@ export default function App() {
                     className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
                   />
                 </div>
+
+                {isRegistering && isBackendReady && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">验证码</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={captchaText}
+                        onChange={(e) => setCaptchaText(e.target.value)}
+                        placeholder="请输入验证码"
+                        required
+                        maxLength={4}
+                        className="flex-1 h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-500"
+                      />
+                      <div 
+                        onClick={refreshCaptcha}
+                        className="w-28 h-12 bg-white rounded-xl overflow-hidden cursor-pointer hover:opacity-80 transition-opacity flex items-center justify-center border border-white/20"
+                        dangerouslySetInnerHTML={{ __html: captchaImage }}
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {authError && (
                   <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-3 rounded-xl border border-red-400/20">
@@ -420,20 +492,12 @@ export default function App() {
                 </button>
               </form>
 
-              <div className="relative flex items-center py-2">
-                <div className="flex-grow border-t border-white/10"></div>
-                <span className="mx-4 text-[10px] text-slate-500 font-bold uppercase tracking-tighter shrink-0">其他选项</span>
-                <div className="flex-grow border-t border-white/10"></div>
+              <div className="pt-4 text-center">
+                <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2">
+                  <Database size={10} />
+                  Professional Fire Engineering Tool
+                </p>
               </div>
-
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full h-10 bg-white/5 border border-white/10 hover:bg-white/10 text-white text-[12px] font-medium rounded-xl flex items-center justify-center gap-2 transition-all opacity-60 hover:opacity-100"
-              >
-                <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3 h-3 grayscale" />
-                <span>Google 账号 (可能受限)</span>
-              </button>
             </div>
           </div>
         </motion.div>
@@ -739,17 +803,29 @@ export default function App() {
               <img src={user.photoURL} alt={user.displayName || ''} className="w-6 h-6 rounded-full border border-slate-300" />
             )}
             <div className="flex flex-col">
-              <span className="text-[10px] font-black text-slate-700 leading-none">
-                {user?.displayName || user?.email}
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-slate-700 leading-none">
+                  {user?.displayName || user?.email}
+                </span>
                 {user?.isTrial && (
-                  <span className="ml-2 px-1.5 py-0.5 bg-amber-500 text-white rounded text-[8px] font-bold">
-                    试用额度: {user.remaining} 次
-                  </span>
+                  <div className={`flex items-center gap-2 px-2 py-0.5 rounded-full border transition-colors ${user.remaining <= 1 ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20'}`}>
+                    <div className="flex gap-0.5">
+                      {[...Array(MAX_DEMO_USAGE)].map((_, i) => (
+                        <div 
+                          key={i} 
+                          className={`w-1.5 h-1.5 rounded-full ${i < (user.remaining || 0) ? (user.remaining <= 1 ? 'bg-red-500' : 'bg-amber-500') : 'bg-slate-200'}`}
+                        />
+                      ))}
+                    </div>
+                    <span className={`text-[9px] font-bold ${user.remaining <= 1 ? 'text-red-700' : 'text-amber-700'}`}>
+                      {user.remaining <= 1 ? '额度告急' : '试用'}: {user.remaining}/{MAX_DEMO_USAGE}
+                    </span>
+                  </div>
                 )}
-              </span>
+              </div>
               <button 
                 onClick={handleLogout}
-                className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter"
+                className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter w-fit"
               >
                 Sign Out
               </button>
@@ -758,6 +834,15 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 反馈按钮 */}
+          <button
+            onClick={() => setIsFeedbackOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full font-bold text-slate-600 hover:bg-slate-100 transition-all border border-slate-200"
+          >
+            <MessageSquare className="w-4 h-4" />
+            <span className="hidden md:inline">系统反馈</span>
+          </button>
+          
           {/* 开始分析按钮：当正在分析或未加载站点时置灰不可用 */}
           <button 
             onClick={runAnalysis}
@@ -801,6 +886,81 @@ export default function App() {
 
           {/* 侧边页内容区域 */}
           <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            <AnimatePresence>
+              {showUrgentPrompt && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  animate={{ opacity: 1, height: 'auto', marginBottom: 20 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="bg-gradient-to-r from-red-600 to-orange-600 p-4 rounded-2xl text-white shadow-lg shadow-red-200">
+                    <div className="flex items-start gap-3">
+                      <div className="bg-white/20 p-1.5 rounded-lg">
+                        <AlertCircle className="w-4 h-4" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-black uppercase tracking-tight">最后一次试用机会</p>
+                        <p className="text-[10px] text-white/80 leading-relaxed font-medium">
+                          您的试用额度即将耗尽。为了确保数据能够保存并享受不限次数的仿真，请立即注册。
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {user?.isTrial && (
+              <motion.div 
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className={`p-4 border rounded-2xl space-y-3 shadow-sm transition-colors ${user.remaining === 1 ? 'bg-red-50 border-red-200' : 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200'}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${user.remaining === 1 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'}`}>
+                      <Zap className={`w-4 h-4 ${user.remaining === 1 ? 'animate-pulse' : ''} fill-current`} />
+                    </div>
+                    <span className={`text-xs font-black uppercase tracking-tight ${user.remaining === 1 ? 'text-red-800' : 'text-amber-800'}`}>
+                      {user.remaining === 1 ? '额度即将耗尽' : '试用额度'}
+                    </span>
+                  </div>
+                  <span className={`text-xs font-black ${user.remaining === 1 ? 'text-red-600' : 'text-amber-600'}`}>{user.remaining} / {MAX_DEMO_USAGE} 次</span>
+                </div>
+                
+                {/* 进度条显示 */}
+                <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(user.remaining / MAX_DEMO_USAGE) * 100}%` }}
+                    className={`h-full transition-all ${user.remaining <= 1 ? 'bg-red-500' : 'bg-amber-500'}`}
+                  />
+                </div>
+                
+                <p className={`text-[10px] font-medium leading-relaxed ${user.remaining === 1 ? 'text-red-700/80' : 'text-amber-700/70'}`}>
+                  {user.remaining === 1 
+                    ? '这是您当前的最后一次免费仿真。注册后即可解锁全部高级功能并消除次数限制。'
+                    : '当前处于试用装状态。完成所有分析后，您可以直接注册新账户以获取永久访问权限。'}
+                </p>
+                
+                <button 
+                  onClick={() => {
+                    handleLogout();
+                    setIsRegistering(true);
+                  }}
+                  className={`w-full py-2.5 text-[11px] font-black rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 ${
+                    user.remaining === 1 
+                      ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-200' 
+                      : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-200'
+                  }`}
+                >
+                  <LogIn size={14} />
+                  立即注册/登录账号
+                </button>
+              </motion.div>
+            )}
+            
             {/* 根据当前选中的 sidebarTab 渲染不同的面板 */}
             {sidebarTab === 'analyze' ? (
               <>
@@ -1137,6 +1297,7 @@ export default function App() {
           {/* 地图视图容器：使用 React-Leaflet 实现交互式地图 */}
           <div className={`flex-1 relative ${activeTab === 'map' ? 'block' : 'hidden'}`}>
             <MapContainer 
+              key={`map-${user?.uid || 'guest'}`}
               center={mapCenter} 
               zoom={13} 
               className="w-full h-full"
@@ -1290,6 +1451,13 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* 反馈弹窗 */}
+      <FeedbackModal 
+        isOpen={isFeedbackOpen} 
+        onClose={() => setIsFeedbackOpen(false)} 
+        user={user}
+      />
     </div>
   );
 }

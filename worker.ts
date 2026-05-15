@@ -2,7 +2,16 @@ import { Hono } from 'hono';
 import { handle } from 'hono/cloudflare-pages'; // 虽然是 Workers，但 Hono 的 Pages 处理逻辑也非常通用
 import { createClient } from '@supabase/supabase-js';
 
-const app = new Hono().basePath('/api');
+type Bindings = {
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+};
+
+type Variables = {
+  remaining: number;
+};
+
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>().basePath('/api');
 
 // 健康检查
 app.all('/health', (c) => {
@@ -13,58 +22,6 @@ app.all('/health', (c) => {
     supabase: hasSupabase,
     time: new Date().toISOString()
   });
-});
-
-// 登录接口
-app.post('/auth/login', async (c) => {
-  const { email, password } = await c.req.json();
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_ANON_KEY);
-  
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) return c.json({ success: false, message: error.message }, 401);
-
-  return c.json({
-    success: true,
-    user: {
-      uid: data.user.id,
-      email: data.user.email,
-      displayName: data.user.user_metadata?.full_name || data.user.email
-    }
-  });
-});
-
-// 注册接口
-app.post('/auth/register', async (c) => {
-  const { email, password, displayName } = await c.req.json();
-  const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_ANON_KEY);
-
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: { data: { full_name: displayName } }
-  });
-
-  if (error) return c.json({ success: false, message: error.message }, 400);
-
-  return c.json({
-    success: true,
-    user: {
-      uid: data.user?.id,
-      email: data.user?.email,
-      displayName: displayName || '新用户'
-    }
-  });
-});
-
-// 登出接口
-app.post('/auth/logout', async (c) => {
-  try {
-    const supabase = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_ANON_KEY);
-    await supabase.auth.signOut();
-    return c.json({ success: true });
-  } catch (err: any) {
-    return c.json({ success: false, message: err.message }, 500);
-  }
 });
 
 // 演示账户限额 (Workers 内存不持久，仅供同一实例内简单演示)

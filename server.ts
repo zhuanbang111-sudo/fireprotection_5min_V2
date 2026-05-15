@@ -33,36 +33,42 @@ app.use('/api', apiRouter);
 // ---【系统认证与限额逻辑】---
 
 // 内存中维护演示账户的限额（生产环境建议配合数据库存储，当前为演示版本）
-let demoUsageCount = 0;
+const demoUsageMap = new Map<string, number>();
 const MAX_DEMO_USAGE = 5;
 
 // 校验限额的中间件
 const checkUsageLimit = (req: any, res: any, next: any) => {
-  const userId = req.headers['x-user-id']; // 我们约定前端在请求头中传递 uid
-  if (userId === 'demo-999') {
-    if (demoUsageCount >= MAX_DEMO_USAGE) {
+  const userId = req.headers['x-user-id'] as string; // 我们约定前端在请求头中传递 uid
+  if (userId && userId.startsWith('demo-')) {
+    const currentCount = demoUsageMap.get(userId) || 0;
+    if (currentCount >= MAX_DEMO_USAGE) {
       return res.status(403).json({ 
         success: false, 
-        message: `快速试用额度已用尽（共 ${MAX_DEMO_USAGE} 次），请注册账号继续使用完整功能` 
+        message: `您的快速试用额度已用尽（共 ${MAX_DEMO_USAGE} 次）。` 
       });
     }
-    demoUsageCount++;
-    res.locals.remaining = MAX_DEMO_USAGE - demoUsageCount;
-    console.log(`[Limit] Demo user usage: ${demoUsageCount}/${MAX_DEMO_USAGE}`);
+    const newCount = currentCount + 1;
+    demoUsageMap.set(userId, newCount);
+    res.locals.remaining = MAX_DEMO_USAGE - newCount;
+    console.log(`[Limit] Demo user ${userId} usage: ${newCount}/${MAX_DEMO_USAGE}`);
   }
   next();
 };
 
 // 途径 1: 极致简单的“一键演示”通道
 apiRouter.post('/auth/instant', (req, res) => {
+  const { trialId } = req.body;
+  const userId = trialId || `demo-${Math.random().toString(36).substring(2, 9)}`;
+  const currentCount = demoUsageMap.get(userId) || 0;
+  
   res.json({ 
     success: true, 
     user: { 
-      uid: 'demo-999', 
+      uid: userId, 
       email: 'demo@fire-engineer.local', 
       displayName: '演示专家/指挥官',
       isTrial: true,
-      remaining: MAX_DEMO_USAGE - demoUsageCount
+      remaining: MAX_DEMO_USAGE - currentCount
     } 
   });
 });
@@ -89,7 +95,25 @@ apiRouter.post('/auth/login', async (req, res) => {
 
 apiRouter.post('/auth/register', async (req, res) => {
   if (!supabaseUrl) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
-  const { email, password, displayName } = req.body;
+  const { email, password, displayName, captchaId, captchaText } = req.body;
+
+  // 1. 验证码校验
+  if (!captchaId || !captchaText) {
+    return res.status(400).json({ success: false, message: '请输入验证码' });
+  }
+
+  const stored = captchaStore[captchaId];
+  if (!stored || stored.expires < Date.now()) {
+    return res.status(400).json({ success: false, message: '验证码已过期，请点击图片刷新' });
+  }
+
+  if (stored.text !== captchaText.toLowerCase()) {
+    return res.status(400).json({ success: false, message: '验证码不正确' });
+  }
+
+  // 验证后立即删除，防止重用
+  delete captchaStore[captchaId];
+
   try {
     const { data, error } = await supabase.auth.signUp({ 
       email, 
@@ -117,7 +141,7 @@ apiRouter.post('/auth/register', async (req, res) => {
 
 apiRouter.post('/auth/logout', async (req, res) => {
   try { 
-    await supabase.auth.signOut(); 
+    if (supabase) await supabase.auth.signOut(); 
     res.json({ success: true }); 
   } catch (e: any) { 
     res.status(500).json({ success: false, message: e.message }); 
@@ -131,6 +155,90 @@ apiRouter.all('/health', (req, res) => {
     supabase: !!supabaseUrl,
     time: new Date().toISOString()
   });
+});
+
+import svgCaptcha from 'svg-captcha';
+
+// ---【安全验证】验证码内存存储 (生产环境建议使用 Redis) ---
+interface CaptchaData {
+  text: string;
+  expires: number;
+}
+const captchaStore: Record<string, CaptchaData> = {};
+
+// 清理过期验证码 (每分钟运行一次)
+setInterval(() => {
+  const now = Date.now();
+  Object.keys(captchaStore).forEach(id => {
+    if (captchaStore[id].expires < now) delete captchaStore[id];
+  });
+}, 60000);
+
+/**
+ * ---【安全验证】获取验证码接口 ---
+ */
+apiRouter.get('/auth/captcha', (req, res) => {
+  const captcha = svgCaptcha.create({
+    size: 4,
+    ignoreChars: '0o1i',
+    noise: 2,
+    color: true,
+    background: '#f8fafc'
+  });
+  
+  const id = Math.random().toString(36).substring(2, 11);
+  captchaStore[id] = {
+    text: captcha.text.toLowerCase(),
+    expires: Date.now() + 300000 // 5分钟有效期
+  };
+  
+  res.json({
+    success: true,
+    id: id,
+    data: captcha.data // SVG 字符串
+  });
+});
+
+/**
+ * ---【用户反馈】反馈提交接口 ---
+ */
+apiRouter.post('/feedback', async (req, res) => {
+  const { userId, email, content, screenshot } = req.body;
+  
+  if (!content) {
+    return res.status(400).json({ success: false, message: '反馈内容不能为空' });
+  }
+
+  console.log(`[Feedback] Received from ${email || userId}: ${content.substring(0, 50)}...`);
+
+  try {
+    if (supabaseUrl && supabaseKey) {
+      // 尝试存储到 Supabase
+      // 假设用户可能没有创建表，我们尝试插入，如果失败则降级为日志
+      const { data, error } = await supabase
+        .from('feedback')
+        .insert([
+          { 
+            user_id: userId, 
+            email: email, 
+            content: content, 
+            screenshot: screenshot, // 这里存为 base64 文本，生产环境建议存 Bucket 后传 URL
+            created_at: new Date().toISOString()
+          }
+        ]);
+
+      if (error) {
+        console.warn('[Feedback] Supabase insert failed (possibly table missing):', error.message);
+        // 如果是因为表不存在，我们仅在后台打印，不影响前端成功反馈（兜底到控制台日志）
+      }
+    }
+    
+    // 即使 Supabase 写入失败（比如表没建），我们也返回成功，因为我们已经在后端控制台留下了记录
+    res.json({ success: true, message: '反馈已收到，感谢您的支持。' });
+  } catch (e: any) {
+    console.error('[Feedback] Critical error during submission:', e);
+    res.status(500).json({ success: false, message: '服务器忙，请稍后再试。' });
+  }
 });
 
 /**
