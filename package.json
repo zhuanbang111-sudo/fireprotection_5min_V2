@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild worker.ts --bundle --platform=browser --format=esm --minify --sourcemap --outfile=dist/worker.js --conditions=worker",
+    "build": "vite build && esbuild worker.ts --bundle --platform=neutral --main-fields=module,main --format=esm --minify --sourcemap --outfile=dist/worker.js",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
