@@ -16,12 +16,16 @@ const MAX_DEMO_USAGE = 5;
 // 初始化 Supabase
 const supabaseUrl = process.env.SUPABASE_URL || '';
 const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
 
-if (supabaseUrl && supabaseKey) {
+// 仅在变量存在时初始化，避免 SDK 内部抛出异常
+const supabase = (supabaseUrl && supabaseKey) 
+  ? createClient(supabaseUrl, supabaseKey) 
+  : null;
+
+if (supabase) {
   console.log('[FIRE_ENGINEER] Supabase 初始化成功');
 } else {
-  console.warn('[FIRE_ENGINEER] 缺少 Supabase 环境变量，Auth 功能将受限');
+  console.warn('[FIRE_ENGINEER] 缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY 环境变量，部分后端 Auth 校验将被跳过或受限');
 }
 
 const app = express();
@@ -69,6 +73,9 @@ const checkUsageLimit = async (req: any, res: any, next: any) => {
 
   // 2. 如果是注册用户 (必须携带有效的 Authorization Bearer Token)
   if (authHeader && authHeader.startsWith('Bearer ')) {
+    if (!supabase) {
+      return res.status(503).json({ success: false, message: '后端认证服务未配置，暂时无法验证您的身份' });
+    }
     const token = authHeader.split(' ')[1];
     try {
       const { data: { user }, error } = await supabase.auth.getUser(token);
@@ -131,9 +138,8 @@ apiRouter.post('/feedback', async (req, res) => {
   console.log(`[Feedback] Received from ${email || userId}: ${content.substring(0, 50)}...`);
 
   try {
-    if (supabaseUrl && supabaseKey) {
+    if (supabase) {
       // 尝试存储到 Supabase
-      // 假设用户可能没有创建表，我们尝试插入，如果失败则降级为日志
       const { data, error } = await supabase
         .from('feedback')
         .insert([
