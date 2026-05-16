@@ -109,68 +109,6 @@ apiRouter.post('/auth/instant', (req, res) => {
   });
 });
 
-// 途径 2: Supabase 认证中转代理
-apiRouter.post('/auth/login', async (req, res) => {
-  if (!supabaseUrl) return res.status(503).json({ success: false, message: '认证中转服务未启动' });
-  const { email, password } = req.body;
-  try {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    
-    res.json({ 
-      success: true, 
-      session: data.session, // 包含 access_token 和 refresh_token
-      user: { 
-        uid: data.user.id, 
-        email: data.user.email, 
-        displayName: data.user.user_metadata?.full_name || data.user.email 
-      } 
-    });
-  } catch (error: any) { 
-    res.status(401).json({ success: false, message: error.message || '账号或密码错误' }); 
-  }
-});
-
-apiRouter.post('/auth/register', async (req, res) => {
-  if (!supabaseUrl) return res.status(503).json({ success: false, message: '注册代理服务不可用' });
-  const { email, password, displayName } = req.body;
-
-  try {
-    const { data, error } = await supabase.auth.signUp({ 
-      email, 
-      password,
-      options: {
-        data: {
-          full_name: displayName
-        }
-      }
-    });
-    if (error) throw error;
-    if (!data.user) throw new Error('注册未返回用户信息');
-    
-    res.json({ 
-      success: true, 
-      session: data.session, // 包含首次会话
-      user: { 
-        uid: data.user.id, 
-        email: data.user.email, 
-        displayName: displayName || '新用户' 
-      } 
-    });
-  } catch (error: any) { 
-    res.status(400).json({ success: false, message: error.message }); 
-  }
-});
-
-apiRouter.post('/auth/logout', async (req, res) => {
-  try { 
-    if (supabase) await supabase.auth.signOut(); 
-    res.json({ success: true }); 
-  } catch (e: any) { 
-    res.status(500).json({ success: false, message: e.message }); 
-  }
-});
-
 // ---【系统状态】健康检查接口 ---
 apiRouter.all('/health', (req, res) => {
   res.json({ 

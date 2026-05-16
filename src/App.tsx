@@ -35,13 +35,8 @@ import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
-import { createClient } from '@supabase/supabase-js'; // 导入 Supabase 客户端
+import { supabase } from './lib/supabaseClient'; // 导入自定义 Supabase 客户端
 import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
-
-// 初始化 Supabase 客户端 (支持客户端直接调用，解决 Cloudflare 等纯静态部署问题)
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
@@ -94,20 +89,22 @@ const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 const MAX_DEMO_USAGE = 5;
 
 // --- 全局网络引擎配置 (Axios Interceptor) ---
-// 逻辑：每次发起请求前，自动检查本地是否有有效的会话令牌，并将其注入 Authorization 头部。
-// 同时处理 401 错误，实现自动登出跳转。
-axios.interceptors.request.use((config) => {
-  const savedUser = localStorage.getItem('fire_isochrone_user');
-  if (savedUser) {
-    try {
-      const parsed = JSON.parse(savedUser);
-      // 如果存在 JWT 令牌，则使用标准 Bearer 格式
-      if (parsed.session?.access_token) {
-        config.headers.Authorization = `Bearer ${parsed.session.access_token}`;
-      }
-      // 保留原有的 x-user-id 用于演示账号兼容
-      config.headers['x-user-id'] = parsed.uid;
-    } catch (e) {}
+// 逻辑：每次发起请求前，自动检查 Supabase 会话令牌，并将其注入 Authorization 头部。
+// 用户 ID 也会被注入，以兼容后端演示账号逻辑。
+axios.interceptors.request.use(async (config) => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    config.headers.Authorization = `Bearer ${session.access_token}`;
+    config.headers['x-user-id'] = session.user.id;
+  } else {
+    // 降级检查本地 localStorage (用于演示账号)
+    const savedUser = localStorage.getItem('fire_isochrone_user');
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        config.headers['x-user-id'] = parsed.uid;
+      } catch (e) {}
+    }
   }
   return config;
 }, (error) => Promise.reject(error));
@@ -187,44 +184,45 @@ export default function App() {
     retry: 1,
   });
 
-  // --- 监听 Auth 变化 (本地 Session 模拟) ---
+  // --- 监听 Auth 变化 (Supabase 官方推荐模式) ---
   useEffect(() => {
-    if (isHealthFetched) {
-      if (healthFetchError) {
-        console.error('[App] Backend connectivity issue:', healthFetchError);
-        setIsBackendReady(false);
-        addLog('ℹ️ 无法连接到自定义后端，切换至 Supabase 客户端直接模式。');
-        if (!supabase) {
-          setAuthError('认证服务不可用。如果您在 Cloudflare 部署，请确保已设置 VITE_ 环境变量。');
-        }
-      } else if (healthData) {
-        const isHtml = typeof healthData === 'string' && healthData.toLowerCase().includes('<!doctype html>');
-        if (isHtml) {
-          addLog('ℹ️ 检测到纯静态环境，将尝试切换至客户端认证模式。');
-          setIsBackendReady(false);
-          if (!supabase) {
-            setAuthError('静态部署缺少配置：请设置 VITE_SUPABASE_ URL/KEY 环境变量。');
-          }
-        } else {
-          setIsBackendReady(true);
-          const envName = healthData.environment === 'cloudflare-pages' || healthData.environment === 'cloudflare-workers' 
-            ? 'Cloudflare 全栈架构' 
-            : '自定义 Node.js 后端';
-          addLog(`✅ 后端已就绪：${envName}`);
-        }
-      }
+    // 监听后端健康
+    if (isHealthFetched && healthData) {
+      const isHtml = typeof healthData === 'string' && healthData.toLowerCase().includes('<!doctype html>');
+      setIsBackendReady(!isHtml);
     }
 
-    const savedUser = localStorage.getItem('fire_isochrone_user');
-    if (savedUser) {
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (e) {
-        localStorage.removeItem('fire_isochrone_user');
+    // 监听 Supabase 身份变化
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log(`[Auth Event] ${event}`);
+      if (session) {
+        setUser({
+          uid: session.user.id,
+          email: session.user.email,
+          displayName: session.user.user_metadata?.full_name || session.user.email,
+          isTrial: false
+        });
+        localStorage.setItem('fire_isochrone_user_active', 'true');
+      } else {
+        // 如果没有 session，检查是否是演示账号
+        const savedUser = localStorage.getItem('fire_isochrone_user');
+        if (savedUser) {
+          try {
+            const parsed = JSON.parse(savedUser);
+            if (parsed.isTrial) {
+              setUser(parsed);
+              return;
+            }
+          } catch (e) {}
+        }
+        setUser(null);
+        localStorage.removeItem('fire_isochrone_user_active');
       }
-    }
-    setIsAuthChecking(false);
-  }, [healthData, healthFetchError, isHealthFetched]);
+      setIsAuthChecking(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, [healthData, isHealthFetched]);
 
   const handleInstantTrial = async () => {
     setIsLoading(true);
@@ -267,60 +265,23 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 优先尝试后端 Proxy (支持隐藏 API Key 及 试用限额)
-      if (isBackendReady) {
-        const endpoint = isRegistering ? '/api/auth/register' : '/api/auth/login';
-        const response = await axios.post(endpoint, {
+      if (isRegistering) {
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          displayName
+          options: { data: { full_name: displayName } }
         });
-
-        if (response.data.success) {
-          const userData = {
-            ...response.data.user,
-            session: response.data.session
-          };
-          setUser(userData);
-          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
-          localStorage.setItem('fire_isochrone_user_active', 'true');
-          addLog(`✅ 欢迎回来, ${userData.displayName}`);
-          return;
-        }
+        if (error) throw error;
+        if (!data.user) throw new Error('注册成功，但未返回用户信息');
+        addLog('✅ 注册成功！如果是首次注册，请检查邮箱验证。');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        addLog('✅ 登录成功');
       }
-
-      // 如果后端不可用，且配置了前端 Supabase 客户端，则直接调用 (静态部署模式)
-      if (supabase) {
-        if (isRegistering) {
-          const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: { data: { full_name: displayName } }
-          });
-          if (error) throw error;
-          if (!data.user) throw new Error('注册未返回用户信息');
-          const userData = { uid: data.user.id, email: data.user.email, displayName: displayName || '新用户' };
-          setUser(userData);
-          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
-        } else {
-          const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-          if (error) throw error;
-          if (!data.user) throw new Error('登录未返回用户信息');
-          const userData = { 
-            uid: data.user.id, 
-            email: data.user.email, 
-            displayName: data.user.user_metadata?.full_name || data.user.email 
-          };
-          setUser(userData);
-          localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
-        }
-      } else if (!isBackendReady) {
-        throw new Error('认证服务未就绪且未配置前端环境变量');
-      }
-
     } catch (error: any) {
       console.error('[Auth] Error:', error);
-      const msg = error.response?.data?.message || error.message || '网络错误，请稍后再试';
+      const msg = error.message || '认证失败，请重试';
       setAuthError(`认证失败: ${msg}`);
     } finally {
       setIsLoading(false);
@@ -331,29 +292,14 @@ export default function App() {
     setIsLoading(true);
     addLog('正在退出登录...');
     try {
-      // 同时清理后端 Session 和前端 Client
-      if (isBackendReady) {
-        try {
-          await axios.post('/api/auth/logout');
-        } catch (e) {
-          console.warn('Backend logout failed, proceeding with client cleanup');
-        }
-      }
-      
-      if (supabase) {
-        await supabase.auth.signOut();
-      }
+      await supabase.auth.signOut();
 
-      // 强制清理本地缓存
+      // 清理演示账号状态
       localStorage.removeItem('fire_isochrone_user');
       localStorage.removeItem('fire_isochrone_user_active');
       
       addLog('✅ 已安全退出登录');
-      
-      // 这里的策略优化：直接刷新页面，不手动 setUser(null)
-      // 这样可以避免 React 在页面刷新前尝试 unmount 地图组件时可能产生的 DOM 冲突
       window.location.reload();
-      
     } catch (error) {
       console.error('Logout failed:', error);
       addLog('❌ 退出过程中出现异常');
