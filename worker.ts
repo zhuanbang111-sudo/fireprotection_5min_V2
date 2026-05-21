@@ -1,9 +1,8 @@
 import { Hono } from 'hono';
-import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 type Bindings = {
-  SUPABASE_URL: string;
-  SUPABASE_ANON_KEY: string;
+  DB: any;
 };
 
 type Variables = {
@@ -11,28 +10,47 @@ type Variables = {
   user?: any;
 };
 
-const DEFAULT_URL = 'https://puzkestptayrjldqjrcb.supabase.co';
-const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB1emtlc3RwdGF5cmpsZHFqcmNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3Mzg4MDAsImV4cCI6MjA5NDMxNDgwMH0.NLJ6sLz_1zUTetS7CfSs3bGwlZb9q6KWUVWGLIG4LDM';
-
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>().basePath('/api');
-
-// --- 初始化全局 Supabase 客户端共享实例 ---
-let supabaseClient: any = null;
-
-const getSupabase = (env: Bindings) => {
-  if (supabaseClient) return supabaseClient;
-  const url = env.SUPABASE_URL || DEFAULT_URL;
-  const key = env.SUPABASE_ANON_KEY || DEFAULT_KEY;
-  if (url && key) {
-    supabaseClient = createClient(url, key);
-  }
-  return supabaseClient;
-};
 
 // ---【全局状态：演示账户限额】---
 // 注意：Workers 内存不持久，仅供同一实例内简单演示计次
 let demoUsageCount = 0;
 const MAX_DEMO_USAGE = 5;
+
+const JWT_SECRET = 'fire_engineer_secret_key_987654321';
+
+// 密码哈希生成 (SHA-256 pbkdf2)
+function hashPassword(password: string): string {
+  return crypto.pbkdf2Sync(password, JWT_SECRET, 1000, 64, 'sha512').toString('hex');
+}
+
+// 签发用户 Session 令牌 
+function generateToken(userId: string): string {
+  const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 天过期
+  const signature = crypto.createHmac('sha256', JWT_SECRET)
+    .update(`${userId}:${expiresAt}`)
+    .digest('hex');
+  return Buffer.from(`${userId}:${expiresAt}:${signature}`).toString('base64');
+}
+
+// 校验 Session 令牌
+function verifyToken(token: string): { userId: string } | null {
+  try {
+    const decoded = Buffer.from(token, 'base64').toString('ascii');
+    const [userId, expiresAtStr, signature] = decoded.split(':');
+    const expiresAt = parseInt(expiresAtStr, 10);
+    if (Date.now() > expiresAt) return null;
+    
+    const expectedSignature = crypto.createHmac('sha256', JWT_SECRET)
+      .update(`${userId}:${expiresAt}`)
+      .digest('hex');
+    
+    if (signature !== expectedSignature) return null;
+    return { userId };
+  } catch {
+    return null;
+  }
+}
 
 // ---【核心优先级分配与限额中间件】---
 const checkUsageLimit = async (c: any, next: any) => {
@@ -54,13 +72,21 @@ const checkUsageLimit = async (c: any, next: any) => {
 
   // 2. 如果是注册用户 (Bearer Token)
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const supabase = getSupabase(c.env);
-    if (!supabase) return c.json({ success: false, message: '认证服务未配置' }, 503);
-    
     const token = authHeader.split(' ')[1];
     try {
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) throw new Error('无效的会话');
+      const tokenData = verifyToken(token);
+      if (!tokenData) throw new Error('无效的会话，请重新登录');
+
+      const DB = c.env.DB;
+      if (!DB) throw new Error('D1 数据库未绑定');
+
+      const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+      if (!user) throw new Error('用户档案不存在，请重新注册或登录');
+      
+      // 验证令牌中的用户 ID 与请求头中声明的是否一致
+      if (userId && user.id !== userId) {
+        return c.json({ success: false, message: '身份验证冲突，操作被拒绝' }, 403);
+      }
       
       c.set('user', user);
       c.set('remaining', Infinity);
@@ -77,13 +103,11 @@ const checkUsageLimit = async (c: any, next: any) => {
 
 // 健康检查
 app.all('/health', (c) => {
-  const url = c.env.SUPABASE_URL || DEFAULT_URL;
-  const key = c.env.SUPABASE_ANON_KEY || DEFAULT_KEY;
-  const hasSupabase = !!(url && key);
+  const hasDB = !!c.env.DB;
   return c.json({
     status: 'ok',
     environment: 'cloudflare-workers',
-    supabase: hasSupabase,
+    database_bound: hasDB,
     time: new Date().toISOString()
   });
 });
@@ -100,6 +124,174 @@ app.post('/auth/instant', async (c) => {
       remaining: MAX_DEMO_USAGE - demoUsageCount
     } 
   });
+});
+
+// 1. 用户注册
+app.post('/auth/register', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { email, password, displayName } = body;
+    if (!email || !password) {
+      return c.json({ success: false, message: '邮箱和密码不能为空' }, 400);
+    }
+
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const lowerEmail = email.toLowerCase().trim();
+    const existingUser = await DB.prepare("SELECT * FROM users WHERE email = ?").bind(lowerEmail).first();
+
+    if (existingUser) {
+      return c.json({ success: false, message: 'already registered' }, 400);
+    }
+
+    if (password.length < 6) {
+      return c.json({ success: false, message: 'Password should be at least 6 characters' }, 400);
+    }
+
+    const userId = `u_${crypto.randomBytes(8).toString('hex')}`;
+    const pHash = hashPassword(password);
+    const dName = displayName || email.split('@')[0];
+    const createdAt = new Date().toISOString();
+
+    await DB.prepare("INSERT INTO users (id, email, password_hash, displayName, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(userId, lowerEmail, pHash, dName, createdAt)
+      .run();
+
+    const token = generateToken(userId);
+    console.log(`[D1 Auth Worker] 新用户注册成功: ${lowerEmail}`);
+
+    return c.json({
+      success: true,
+      user: {
+        uid: userId,
+        email: lowerEmail,
+        displayName: dName,
+        isTrial: false
+      },
+      session: {
+        access_token: token
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth Worker] 注册核心异常:', error);
+    return c.json({ success: false, message: error.message || '服务器忙，注册失败' }, 500);
+  }
+});
+
+// 2. 用户登录
+app.post('/auth/login', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { email, password } = body;
+    if (!email || !password) {
+      return c.json({ success: false, message: '邮箱和密码不能为空' }, 400);
+    }
+
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const lowerEmail = email.toLowerCase().trim();
+    const user = await DB.prepare("SELECT * FROM users WHERE email = ?").bind(lowerEmail).first();
+
+    if (!user) {
+      return c.json({ success: false, message: 'Invalid credentials' }, 401);
+    }
+
+    const hashedPassword = hashPassword(password);
+    if (user.password_hash !== hashedPassword) {
+      return c.json({ success: false, message: 'Invalid credentials' }, 401);
+    }
+
+    const token = generateToken(user.id);
+    console.log(`[D1 Auth Worker] 用户登录成功: ${lowerEmail}`);
+
+    return c.json({
+      success: true,
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false
+      },
+      session: {
+        access_token: token
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth Worker] 登录核心异常:', error);
+    return c.json({ success: false, message: error.message || '服务器忙，登录失败' }, 500);
+  }
+});
+
+// 3. 用户自核验
+app.get('/auth/me', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期，请重新登录' }, 401);
+    }
+
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+
+    return c.json({
+      success: true,
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, message: '自核验异常' }, 500);
+  }
+});
+
+// 4. 用户反馈提交
+app.post('/feedback', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { userId, email, content, screenshot } = body;
+    
+    if (!content) {
+      return c.json({ success: false, message: '反馈内容不能为空' }, 400);
+    }
+
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const feedbackId = `f_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    await DB.prepare("INSERT INTO feedbacks (id, user_id, email, content, screenshot, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(feedbackId, userId || '', email || '', content, screenshot || '', createdAt)
+      .run();
+
+    return c.json({ success: true, message: '反馈已收到，感谢您的支持。' });
+  } catch (error: any) {
+    console.error('[Feedback Worker] 反馈提交异常:', error);
+    return c.json({ success: false, message: '服务器忙，请稍后再试。' }, 500);
+  }
 });
 
 /**
