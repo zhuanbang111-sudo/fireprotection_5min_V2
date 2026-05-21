@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 
 type Bindings = {
   DB: any;

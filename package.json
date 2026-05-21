@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild worker.ts --bundle --platform=neutral --main-fields=module,main --format=esm --minify --sourcemap --outfile=dist/worker.js --external:crypto",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild worker.ts --bundle --platform=neutral --main-fields=module,main --format=esm --minify --sourcemap --outfile=dist/worker.js --external:crypto --external:node:crypto",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
