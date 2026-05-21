@@ -1,53 +1,186 @@
 import express from 'express'; // 导入 express 模块，这是 Node.js 中最基础、最流行的 Web 服务器开发框架，用于处理 HTTP 网页请求
 import { createServer as createViteServer } from 'vite'; // 导入 Vite 提供的开发服务器创建工具，使得我们在开发时能享受到极速的代码热更新（实时预览）
-import path from 'path'; // 导入 Node.js 原生的 path 模块，用于处理和转换文件路径，解决 Windows 或 Linux 系统下路径不一致的问题
+import path from 'path'; // 导入 Node.js 原生的 path 模块，用于处理 and 转换文件路径，解决 Windows 或 Linux 系统下路径不一致的问题
 import axios from 'axios'; // 导入 axios 库，这是一款优秀的基于 Promise 的 HTTP 客户端，我们用它在服务器端向高德地图 API 发起数据请求
 import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览器的“同源策略”限制，允许前端网页跨域调用后端的 API 接口
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
-import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
-// ---【全局状态存储】---
+// ---【全局状态与本地数据库配置】---
 const demoUsageMap = new Map<string, number>();
 const MAX_DEMO_USAGE = 5;
 
-// 初始化 Supabase
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
+// D1 仿真数据库本地磁盘备份路径
+const D1_STORAGE_FILE = path.join(process.cwd(), '.data', 'd1_storage.json');
+const JWT_SECRET = process.env.JWT_SECRET || 'fire_engineer_secret_key_987654321';
 
-// 仅在变量存在时初始化，避免 SDK 内部抛出异常
-const supabase = (supabaseUrl && supabaseKey) 
-  ? createClient(supabaseUrl, supabaseKey) 
-  : null;
+// 仿真加载与保存表 (完全服务于 D1Database binding 的 SQL Parser)
+async function loadTable(tableName: string): Promise<any[]> {
+  try {
+    if (fs.existsSync(D1_STORAGE_FILE)) {
+      const data = fs.readFileSync(D1_STORAGE_FILE, 'utf8');
+      const parsed = JSON.parse(data);
+      return parsed[tableName] || [];
+    }
+  } catch (e) {
+    console.error(`[D1 Simulator] 读取表 ${tableName} 失败, 初始化为空:`, e);
+  }
+  return [];
+}
 
-if (supabase) {
-  console.log('[FIRE_ENGINEER] Supabase 初始化成功');
-} else {
-  console.warn('[FIRE_ENGINEER] 缺少 SUPABASE_URL 或 SUPABASE_ANON_KEY 环境变量，部分后端 Auth 校验将被跳过或受限');
+async function saveTable(tableName: string, rows: any[]) {
+  try {
+    let currentData: any = {};
+    if (fs.existsSync(D1_STORAGE_FILE)) {
+      try {
+        currentData = JSON.parse(fs.readFileSync(D1_STORAGE_FILE, 'utf8'));
+      } catch (e) {}
+    }
+    currentData[tableName] = rows;
+    
+    const dir = path.dirname(D1_STORAGE_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(D1_STORAGE_FILE, JSON.stringify(currentData, null, 2), 'utf8');
+  } catch (e) {
+    console.error(`[D1 Simulator] 写入表 ${tableName} 失败:`, e);
+  }
+}
+
+// 密码哈希生成 (SHA-256 pbkdf2)
+function hashPassword(password: string): string {
+  return crypto.pbkdf2Sync(password, JWT_SECRET, 1000, 64, 'sha512').toString('hex');
+}
+
+// 声明符合 Cloudflare D1 运行标准的 SQL 预编译与执行控制器
+class D1PreparedStatement {
+  private sql: string;
+  private params: any[] = [];
+
+  constructor(sql: string) {
+    this.sql = sql.trim();
+  }
+
+  bind(...args: any[]) {
+    this.params = args;
+    return this;
+  }
+
+  async first<T = any>(): Promise<T | null> {
+    const results = await this.execute();
+    return results.length > 0 ? results[0] as T : null;
+  }
+
+  async all<T = any>(): Promise<{ results: T[]; success: boolean }> {
+    const results = await this.execute();
+    return {
+      results: results as T[],
+      success: true
+    };
+  }
+
+  async run(): Promise<{ success: boolean; meta: any }> {
+    await this.execute();
+    return {
+      success: true,
+      meta: { changes: 1 }
+    };
+  }
+
+  private async execute(): Promise<any[]> {
+    const sqlUpper = this.sql.toUpperCase();
+    const tableWord = this.sql.match(/(FROM|INTO)\s+([a-zA-Z0-9_]+)/i)?.[2]?.toLowerCase();
+
+    if (tableWord === 'users') {
+      const users = await loadTable('users');
+
+      // 1. 根据 email 查找
+      if (sqlUpper.includes('SELECT') && sqlUpper.includes('WHERE EMAIL =')) {
+        const bindEmail = this.params[0]?.toLowerCase().trim();
+        return users.filter((u: any) => u.email.toLowerCase() === bindEmail);
+      }
+
+      // 2. 根据 id 查找
+      if (sqlUpper.includes('SELECT') && sqlUpper.includes('WHERE ID =')) {
+        const bindId = this.params[0];
+        return users.filter((u: any) => u.id === bindId);
+      }
+
+      // 3. 注册新用户 insert into
+      if (sqlUpper.includes('INSERT INTO')) {
+        const [id, email, password_hash, displayName, created_at] = this.params;
+        const newUser = { id, email, password_hash, displayName, created_at };
+        users.push(newUser);
+        await saveTable('users', users);
+        return [newUser];
+      }
+
+      return users;
+    }
+
+    if (tableWord === 'feedbacks') {
+      const feedbacks = await loadTable('feedbacks');
+      if (sqlUpper.includes('INSERT INTO')) {
+        const [id, user_id, email, content, screenshot, created_at] = this.params;
+        const newFeedback = { id, user_id, email, content, screenshot, created_at };
+        feedbacks.push(newFeedback);
+        await saveTable('feedbacks', feedbacks);
+        return [newFeedback];
+      }
+      return feedbacks;
+    }
+
+    return [];
+  }
+}
+
+// 模拟 c.env.DB 或 env.DB
+const env = {
+  DB: {
+    prepare(sql: string) {
+      return new D1PreparedStatement(sql);
+    }
+  }
+};
+
+// 签发用户 Session 令牌 
+function generateToken(userId: string): string {
+  const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 天过期
+  const signature = crypto.createHmac('sha256', JWT_SECRET)
+    .update(`${userId}:${expiresAt}`)
+    .digest('hex');
+  return Buffer.from(`${userId}:${expiresAt}:${signature}`).toString('base64');
+}
+
+// 校验 Session 令牌
+function verifyToken(token: string): { userId: string } | null {
+  try {
+    const decoded = Buffer.from(token, 'base64').toString('ascii');
+    const [userId, expiresAtStr, signature] = decoded.split(':');
+    const expiresAt = parseInt(expiresAtStr, 10);
+    if (Date.now() > expiresAt) return null;
+    
+    const expectedSignature = crypto.createHmac('sha256', JWT_SECRET)
+      .update(`${userId}:${expiresAt}`)
+      .digest('hex');
+    
+    if (signature !== expectedSignature) return null;
+    return { userId };
+  } catch {
+    return null;
+  }
 }
 
 const app = express();
 const PORT = 3000;
 const apiRouter = express.Router();
 
-// ---【调试】apiRouter 内部中间件 ---
-apiRouter.use((req, res, next) => {
-  console.log(`[DEBUG] apiRouter internal path: ${req.path}`);
-  next();
-});
-
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
-
-// ---【调试】打印所有进入 /api 的请求 ---
-app.all('/api/*', (req, res, next) => {
-  console.log(`[DEBUG] Incoming API request: ${req.method} ${req.url} (full path: ${req.path})`);
-  next();
-});
-
-// ---【核心优先级修复】API 路由将在所有路由定义后挂载 ---
 
 // ---【系统认证与限额逻辑】---
 
@@ -73,13 +206,13 @@ const checkUsageLimit = async (req: any, res: any, next: any) => {
 
   // 2. 如果是注册用户 (必须携带有效的 Authorization Bearer Token)
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    if (!supabase) {
-      return res.status(503).json({ success: false, message: '后端认证服务未配置，暂时无法验证您的身份' });
-    }
     const token = authHeader.split(' ')[1];
     try {
-      const { data: { user }, error } = await supabase.auth.getUser(token);
-      if (error || !user) throw new Error('无效的会话，请重新登录');
+      const tokenData = verifyToken(token);
+      if (!tokenData) throw new Error('无效的会话，请重新登录');
+
+      const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+      if (!user) throw new Error('用户档案不存在，请重新注册或登录');
       
       // 验证令牌中的用户 ID 与请求头中声明的是否一致（防止 ID 篡改）
       if (userId && user.id !== userId) {
@@ -88,7 +221,7 @@ const checkUsageLimit = async (req: any, res: any, next: any) => {
 
       // 将用户信息存入本地，后续逻辑可用
       res.locals.user = user;
-      res.locals.remaining = Infinity; // 注册用户暂不限制次数 (或后续可对接计划)
+      res.locals.remaining = Infinity; // 注册用户不限制次数
       return next();
     } catch (e: any) {
       return res.status(401).json({ success: false, message: e.message });
@@ -116,11 +249,137 @@ apiRouter.post('/auth/instant', (req, res) => {
   });
 });
 
+// ---【Cloudflare D1-Style 账号登录与注册控制器接口】---
+
+// 1. 用户注册
+apiRouter.post('/auth/register', async (req, res) => {
+  try {
+    const { email, password, displayName } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: '邮箱和密码不能为空' });
+    }
+
+    const lowerEmail = email.toLowerCase().trim();
+    const existingUser = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(lowerEmail).first();
+
+    if (existingUser) {
+      // 与原 Supabase 抛出的 error 对应，方便前端自动捕获
+      return res.status(400).json({ success: false, message: 'already registered' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: 'Password should be at least 6 characters' });
+    }
+
+    const userId = `u_${crypto.randomBytes(8).toString('hex')}`;
+    const pHash = hashPassword(password);
+    const dName = displayName || email.split('@')[0];
+    const createdAt = new Date().toISOString();
+
+    await env.DB.prepare("INSERT INTO users (id, email, password_hash, displayName, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(userId, lowerEmail, pHash, dName, createdAt)
+      .run();
+
+    const token = generateToken(userId);
+    console.log(`[D1 Auth] 新用户注册并持久化成功: ${lowerEmail}`);
+
+    res.json({
+      success: true,
+      user: {
+        uid: userId,
+        email: lowerEmail,
+        displayName: dName,
+        isTrial: false
+      },
+      session: {
+        access_token: token
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth] 注册核心异常:', error);
+    res.status(500).json({ success: false, message: '服务器忙，注册失败' });
+  }
+});
+
+// 2. 用户登录
+apiRouter.post('/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: '邮箱和密码不能为空' });
+    }
+
+    const lowerEmail = email.toLowerCase().trim();
+    const user = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(lowerEmail).first();
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    const hashedPassword = hashPassword(password);
+    if (user.password_hash !== hashedPassword) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    const token = generateToken(user.id);
+    console.log(`[D1 Auth] 用户登录成功: ${lowerEmail}`);
+
+    res.json({
+      success: true,
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false
+      },
+      session: {
+        access_token: token
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth] 登录核心异常:', error);
+    res.status(500).json({ success: false, message: '服务器忙，登录失败' });
+  }
+});
+
+// 3. 用户主页自核验 (获取当前用户信息)
+apiRouter.get('/auth/me', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期，请重新登录' });
+    }
+
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: '自核验异常' });
+  }
+});
+
 // ---【系统状态】健康检查接口 ---
 apiRouter.all('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
-    supabase: !!supabaseUrl,
+    localsystem: true,
     time: new Date().toISOString()
   });
 });
@@ -138,27 +397,11 @@ apiRouter.post('/feedback', async (req, res) => {
   console.log(`[Feedback] Received from ${email || userId}: ${content.substring(0, 50)}...`);
 
   try {
-    if (supabase) {
-      // 尝试存储到 Supabase
-      const { data, error } = await supabase
-        .from('feedback')
-        .insert([
-          { 
-            user_id: userId, 
-            email: email, 
-            content: content, 
-            screenshot: screenshot, // 这里存为 base64 文本，生产环境建议存 Bucket 后传 URL
-            created_at: new Date().toISOString()
-          }
-        ]);
-
-      if (error) {
-        console.warn('[Feedback] Supabase insert failed (possibly table missing):', error.message);
-        // 如果是因为表不存在，我们仅在后台打印，不影响前端成功反馈（兜底到控制台日志）
-      }
-    }
-    
-    // 即使 Supabase 写入失败（比如表没建），我们也返回成功，因为我们已经在后端控制台留下了记录
+    const feedbackId = `f_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    await env.DB.prepare("INSERT INTO feedbacks (id, user_id, email, content, screenshot, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(feedbackId, userId || '', email || '', content, screenshot || '', createdAt)
+      .run();
     res.json({ success: true, message: '反馈已收到，感谢您的支持。' });
   } catch (e: any) {
     console.error('[Feedback] Critical error during submission:', e);
@@ -560,14 +803,6 @@ async function startServer() {
   // ---【关键修复】API 路由必须在静态资源和 Vite 中间件之前挂载 ---
   app.use('/api', apiRouter);
   
-  // 打印注册好的路由，方便调试
-  console.log('[DEBUG] Active routes:');
-  apiRouter.stack.forEach((r: any) => {
-    if (r.route && r.route.path) {
-      console.log(` - ${Object.keys(r.route.methods).join(',').toUpperCase()} /api${r.route.path}`);
-    }
-  });
-
   // 如果识别为开发调试环境，则挂载 Vite 的极速热更新中间件
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

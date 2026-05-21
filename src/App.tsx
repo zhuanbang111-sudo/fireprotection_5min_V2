@@ -35,7 +35,6 @@ import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
-import { supabase } from './lib/supabaseClient'; // 导入自定义 Supabase 客户端
 import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
 
 // @ts-ignore
@@ -85,26 +84,28 @@ function MapUpdater({ center }: { center: [number, number] }) {
 }
 
 const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
-
 const MAX_DEMO_USAGE = 5;
 
 // --- 全局网络引擎配置 (Axios Interceptor) ---
-// 逻辑：每次发起请求前，自动检查 Supabase 会话令牌，并将其注入 Authorization 头部。
-// 用户 ID 也会被注入，以兼容后端演示账号逻辑。
-axios.interceptors.request.use(async (config) => {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (session) {
-    config.headers.Authorization = `Bearer ${session.access_token}`;
-    config.headers['x-user-id'] = session.user.id;
-  } else {
-    // 降级检查本地 localStorage (用于演示账号)
-    const savedUser = localStorage.getItem('fire_isochrone_user');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        config.headers['x-user-id'] = parsed.uid;
-      } catch (e) {}
+// 逻辑：每次发起请求前，自动检查本地存储的会话令牌并注入 Authorization 头部。
+// 用户 ID 也会被注入，以兼容后端演示账号与限额逻辑。
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('fire_isochrone_auth_token');
+  const savedUserStr = localStorage.getItem('fire_isochrone_user');
+  if (token && savedUserStr) {
+    try {
+      const parsedUser = JSON.parse(savedUserStr);
+      config.headers.Authorization = `Bearer ${token}`;
+      config.headers['x-user-id'] = parsedUser.uid;
+    } catch (e) {
+      // fallback
     }
+  } else if (savedUserStr) {
+    // 降级检查本地 localStorage (用于演示账号)
+    try {
+      const parsed = JSON.parse(savedUserStr);
+      config.headers['x-user-id'] = parsed.uid;
+    } catch (e) {}
   }
   return config;
 }, (error) => Promise.reject(error));
@@ -114,6 +115,7 @@ axios.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       console.warn('[Session] 会话已过期，正在清理...');
+      localStorage.removeItem('fire_isochrone_auth_token');
       localStorage.removeItem('fire_isochrone_user');
       // 仅在已登录状态下发生 401 时刷新，避免死循环
       if (localStorage.getItem('fire_isochrone_user_active')) {
@@ -184,44 +186,72 @@ export default function App() {
     retry: 1,
   });
 
-  // --- 监听 Auth 变化 (Supabase 官方推荐模式) ---
+  // --- 账户状态还原与初始化 ---
   useEffect(() => {
-    // 监听后端健康
+    // 1. 初始化健康检查
     if (isHealthFetched && healthData) {
       const isHtml = typeof healthData === 'string' && healthData.toLowerCase().includes('<!doctype html>');
       setIsBackendReady(!isHtml);
     }
 
-    // 监听 Supabase 身份变化
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log(`[Auth Event] ${event}`);
-      if (session) {
-        setUser({
-          uid: session.user.id,
-          email: session.user.email,
-          displayName: session.user.user_metadata?.full_name || session.user.email,
-          isTrial: false
-        });
-        localStorage.setItem('fire_isochrone_user_active', 'true');
-      } else {
-        // 如果没有 session，检查是否是演示账号
-        const savedUser = localStorage.getItem('fire_isochrone_user');
-        if (savedUser) {
-          try {
-            const parsed = JSON.parse(savedUser);
-            if (parsed.isTrial) {
-              setUser(parsed);
-              return;
-            }
-          } catch (e) {}
-        }
-        setUser(null);
-        localStorage.removeItem('fire_isochrone_user_active');
-      }
-      setIsAuthChecking(false);
-    });
+    let isMounted = true;
 
-    return () => subscription.unsubscribe();
+    // 2. 检查演示账号 (优先从本地恢复，以维持计次)
+    const checkDemo = () => {
+      const savedUser = localStorage.getItem('fire_isochrone_user');
+      if (savedUser) {
+        try {
+          const parsed = JSON.parse(savedUser);
+          if (parsed.isTrial) {
+            setUser(parsed);
+            return true;
+          }
+        } catch (e) {}
+      }
+      return false;
+    };
+
+    // 3. 校验本地登录凭证 (模拟 Cloudflare D1 + Worker 无痛持久化鉴权模式)
+    const initAuth = async () => {
+      try {
+        const token = localStorage.getItem('fire_isochrone_auth_token');
+        if (token) {
+          const res = await axios.get('/api/auth/me', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (isMounted && res.data.success && res.data.user) {
+            setUser(res.data.user);
+            localStorage.setItem('fire_isochrone_user', JSON.stringify(res.data.user));
+            localStorage.setItem('fire_isochrone_user_active', 'true');
+            return;
+          }
+        }
+        if (isMounted) {
+          checkDemo();
+        }
+      } catch (e) {
+        console.warn('[Auth Init Error] 凭证无效或核验异常，退回演示或空状态:', e);
+        localStorage.removeItem('fire_isochrone_auth_token');
+        localStorage.removeItem('fire_isochrone_user_active');
+        if (isMounted) {
+          checkDemo();
+        }
+      } finally {
+        if (isMounted) setIsAuthChecking(false);
+      }
+    };
+
+    initAuth();
+
+    // 安全垫：3秒后强行关闭加载动画，防止极端网络情况挂起
+    const timer = setTimeout(() => {
+      if (isMounted) setIsAuthChecking(false);
+    }, 3000);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
   }, [healthData, isHealthFetched]);
 
   const handleInstantTrial = async () => {
@@ -266,24 +296,68 @@ export default function App() {
 
     try {
       if (isRegistering) {
-        const { data, error } = await supabase.auth.signUp({
+        console.log('[LocalAuth] 正在向本地云服务发起注册:', email);
+        const res = await axios.post('/api/auth/register', {
           email,
           password,
-          options: { data: { full_name: displayName } }
+          displayName
         });
-        if (error) throw error;
-        if (!data.user) throw new Error('注册成功，但未返回用户信息');
-        addLog('✅ 注册成功！如果是首次注册，请检查邮箱验证。');
+        
+        if (res.data.success) {
+          const { user: registeredUser, session } = res.data;
+          addLog('✅ 注册指令提交成功，并已自动登录');
+          localStorage.setItem('fire_isochrone_auth_token', session.access_token);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(registeredUser));
+          localStorage.setItem('fire_isochrone_user_active', 'true');
+          setUser(registeredUser);
+        }
       } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        addLog('✅ 登录成功');
+        console.log('[LocalAuth] 正在向本地云服务请求登录:', email);
+        const res = await axios.post('/api/auth/login', {
+          email,
+          password
+        });
+        
+        if (res.data.success) {
+          const { user: loggedInUser, session } = res.data;
+          addLog('✅ 登录成功，正在加载核心时空数据...');
+          localStorage.setItem('fire_isochrone_auth_token', session.access_token);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(loggedInUser));
+          localStorage.setItem('fire_isochrone_user_active', 'true');
+          setUser(loggedInUser);
+        }
       }
     } catch (error: any) {
-      console.error('[Auth] Error:', error);
-      const msg = error.message || '认证失败，请重试';
-      setAuthError(`认证失败: ${msg}`);
+      console.error('[LocalAuth] 发生认证错误:', error);
+      let errMsg = '服务不可用或网络异常，请稍后重试';
+      
+      if (error.response?.data?.message) {
+        const serverMsg = error.response.data.message;
+        if (serverMsg === 'already registered') {
+          addLog('ℹ️ 自动切换：检测到该邮箱已注册，已为您切换为登录模式。');
+          setAuthError('该账号已经注册过了，已为您自动切换至登录模式。请直接在下方输入密码并点击“登录”。');
+          setIsRegistering(false);
+          setIsLoading(false);
+          return;
+        } else if (serverMsg.includes('at least 6 characters')) {
+          addLog('❌ 注册拦截：密码长度不符合要求。');
+          setAuthError('密码太弱！出于安全考虑，密码长度必须大于或等于 6 位数。');
+          return;
+        } else if (serverMsg === 'Invalid login credentials' || serverMsg === 'Invalid credentials') {
+          addLog('❌ 登录失败：账号密码有误或不存在。');
+          setAuthError('账号不存在或密码不正确！请检查邮箱地址并重试密码输入。');
+          return;
+        } else {
+          errMsg = serverMsg;
+        }
+      } else if (error.message) {
+        errMsg = error.message;
+      }
+      
+      setAuthError(`认证失败: ${errMsg}`);
+      addLog(`❌ 认证错误: ${errMsg}`);
     } finally {
+      console.log('[LocalAuth] 请求完成，停止载入动画');
       setIsLoading(false);
     }
   };
@@ -292,17 +366,17 @@ export default function App() {
     setIsLoading(true);
     addLog('正在退出登录...');
     try {
-      await supabase.auth.signOut();
-
-      // 清理演示账号状态
+      // 清空本地所有会话缓存与 Session 标识
+      localStorage.removeItem('fire_isochrone_auth_token');
       localStorage.removeItem('fire_isochrone_user');
       localStorage.removeItem('fire_isochrone_user_active');
       
       addLog('✅ 已安全退出登录');
+      setUser(null);
       window.location.reload();
     } catch (error) {
       console.error('Logout failed:', error);
-      addLog('❌ 退出过程中出现异常');
+      addLog('❌ 退出过程中出现外部异常');
     } finally {
       setIsLoading(false);
     }
@@ -421,9 +495,25 @@ export default function App() {
                 </div>
 
                 {authError && (
-                  <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold bg-red-400/10 p-3 rounded-xl border border-red-400/20">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    {authError}
+                  <div className="flex flex-col gap-2 bg-red-400/10 p-3.5 rounded-xl border border-red-400/20">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                      <div className="text-red-400 text-[11px] font-bold leading-relaxed whitespace-pre-wrap flex-1 text-left">
+                        {authError}
+                      </div>
+                    </div>
+                    {authError.includes('账号或密码不正确') && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setIsRegistering(true);
+                          setAuthError('已切换至注册模式。请重新输入密码并注册。');
+                        }}
+                        className="self-end text-[10px] bg-red-400/20 hover:bg-red-400/30 text-red-300 px-3 py-1.5 rounded-md transition-colors"
+                      >
+                        已删除该账号？点击注册新账号
+                      </button>
+                    )}
                   </div>
                 )}
 

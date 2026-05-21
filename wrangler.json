@@ -3,6 +3,13 @@
   "main": "dist/worker.js",
   "compatibility_date": "2024-05-01",
   "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fire",
+      "database_id": "f13dec16-a72c-4f65-a9d2-b8a30389ac9a"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS"
