@@ -314,7 +314,7 @@ apiRouter.post('/auth/register', async (req, res) => {
     const existingUser = await env.DB.prepare("SELECT * FROM users WHERE email = ?").bind(lowerEmail).first();
 
     if (existingUser) {
-      // 与原 Supabase 抛出的 error 对应，方便前端自动捕获
+      // 邮箱已被注册，返回特定错误信息方便前端捕获
       return res.status(400).json({ success: false, message: 'already registered' });
     }
 

@@ -40,6 +40,7 @@ import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
 import { VipModal } from './components/VipModal'; // 导入VIP专属弹层
 import { StatusBadge } from './components/StatusBadge'; // 导入 VIP 身份徽章组件
+import { SummaryReport } from './components/SummaryReport'; // 导入空间成果聚合报告组件
 
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
@@ -462,7 +463,7 @@ export default function App() {
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-2 text-center">
                 <p className="text-[10px] text-amber-200/80 leading-relaxed">
                   <span className="font-bold text-amber-400">💡 提示：</span>
-                  演示目的请点击“快速试用”直接进入，无需注册。
+                  请输入常用邮箱和密码，即可直接注册、登录并启用专属消防分析工作区。
                 </p>
                 {isHealthFetched && healthData && (
                   <p className="text-[9px] text-slate-300 mt-2 border-t border-white/10 pt-1.5 leading-normal">
@@ -480,22 +481,18 @@ export default function App() {
               {/* 选项卡切换 */}
               <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
                 <button 
+                  type="button"
                   onClick={() => { setIsRegistering(false); setAuthError(''); }}
                   className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${!isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
                   账号登录
                 </button>
                 <button 
+                  type="button"
                   onClick={() => { setIsRegistering(true); setAuthError(''); }}
                   className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
                   注册
-                </button>
-                <button 
-                  onClick={handleInstantTrial}
-                  className="flex-1 py-1.5 text-[11px] font-bold rounded-md text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all font-mono"
-                >
-                  快速试用
                 </button>
               </div>
 
@@ -1569,8 +1566,15 @@ export default function App() {
                 </div>
               </div>
 
+              {/* 空间成果多维聚合分析报告 */}
+              <SummaryReport results={results} user={user} />
+
               {/* 结果数据展示表格 */}
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm shadow-slate-100">
+                <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <h3 className="font-extrabold text-[#0f172a] text-xs uppercase tracking-wider">测算明细数据项 (Data Records Matrix)</h3>
+                  <span className="text-[10px] text-slate-400 font-mono font-bold">WGS-84 MAP MAPPINGS</span>
+                </div>
                 <table className="w-full text-left border-collapse">
                   <thead>
                     {/* 表头定义 */}

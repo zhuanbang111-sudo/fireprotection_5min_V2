@@ -320,7 +320,7 @@ app.post('/auth/upgrade', async (c) => {
     });
   } catch (error: any) {
     console.error('[D1 Auth Worker] 升级核心异常:', error);
-    return c.json({ success: false, message: error.message || '激活失败' }, 550);
+    return c.json({ success: false, message: error.message || '激活失败' }, 500);
   }
 });
 

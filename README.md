@@ -28,7 +28,7 @@
 - **原生 WGS84 支持**：默认支持 WGS-84 标准 GPS 坐标，同时兼容 GCJ-02 与 BD-09。数据入库自动纠编，成果导出零漂移对齐。
 
 ### 6. 安全登录与访问控制 (Authentication)
-- **Supabase Auth 集成**：支持基于邮箱账号的生产级身份验证，保护敏感消防规划数据。
+- **D1 身份验证**：支持基于 Cloudflare D1 数据库和邮箱账号的生产级安全身份验证，保护敏感消防规划数据。
 - **权限隔离**：内置登录页面，确保只有授权用户可进入仿真分析系统。
 
 ## ✨ 功能特性
@@ -76,7 +76,7 @@
 
 1. **解锁环境变量**：
    - 确保 `wrangler.json` 中配置了 `"main": "dist/worker.js"`。
-   - 在 Cloudflare 控制台的 **Settings > Variables** 中，你现在可以正常添加 `SUPABASE_URL`、`SUPABASE_ANON_KEY` 和 `AMAP_KEYS` 了。
+   - 在 Cloudflare 控制台的 **Settings > Variables** 中，你现在可以正常添加 `AMAP_KEYS` 等环境变量控制密钥了。
 2. **构建命令**：
    - 使用 `npm run build` 生成 `dist` 目录。
    - 使用 `npx wrangler deploy` 或在控制台上传 `dist` 文件夹。
