@@ -1,1 +1,34 @@
 @import "tailwindcss";
+
+@theme {
+  --animate-shimmer: shimmer 2.5s infinite linear;
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+}
+
+/* 自定义现代、雅致的滚动条，支持更紧凑的外观和风格协调 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.25);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.45);
+}
+

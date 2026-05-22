@@ -22,7 +22,9 @@ import {
   Pause,          // 暂停图标
   LogIn,          // 登录图标
   LogOut,         // 登出图标
-  MessageSquare   // 反馈图标
+  MessageSquare,  // 反馈图标
+  Crown,          // Crown VIP图标
+  Gem             // Gem VIP图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
 import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
@@ -36,6 +38,8 @@ import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
 import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
+import { VipModal } from './components/VipModal'; // 导入VIP专属弹层
+import { StatusBadge } from './components/StatusBadge'; // 导入 VIP 身份徽章组件
 
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
@@ -137,6 +141,35 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isBackendReady, setIsBackendReady] = useState(false);
+
+  // --- 商业及VIP特权追踪状态 ---
+  const [isVipModalOpen, setIsVipModalOpen] = useState(false);
+  const [vipModalTitle, setVipModalTitle] = useState('解锁 PRO 专业版算力特权');
+  const [vipModalDesc, setVipModalDesc] = useState('您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心资产导出权限');
+
+  const isVip = useMemo(() => {
+    if (!user) return false;
+    if (user.isTrial) return false; // 试用账户不算 VIP
+    if (user.vip_level !== 'pro') return false;
+    if (user.vip_expires_at) {
+      try {
+        return new Date(user.vip_expires_at) > new Date(); // 判断到期时间是否合规
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }, [user]);
+
+  const vipExpiryDateStr = useMemo(() => {
+    if (!user || !user.vip_expires_at) return '';
+    try {
+      const d = new Date(user.vip_expires_at);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    } catch {
+      return '';
+    }
+  }, [user]);
 
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
@@ -717,6 +750,15 @@ export default function App() {
       return;
     }
 
+    // 【商业卡口一：多站点批量计算限制拦截】
+    if (stations.length > 1 && !isVip) {
+      setVipModalTitle('🚨 批量计算专属 PRO 服务');
+      setVipModalDesc(`您当前加载了 ${stations.length} 个站点。免费试用账户仅支持“单点（1个站点）”依次进行等时圈精密测算，无法进行全自动多点批量循环。请联系客服升级为 PRO 付费专业版以解锁企业级多站点并行全自动算力！`);
+      setIsVipModalOpen(true);
+      addLog('⚠️ 批量测算拦截：免费用户单次仅支持单站点计算，多点批量已被拦截。');
+      return;
+    }
+
     setIsAnalyzing(true); // 开启分析状态
     setIsPaused(false);
     pauseRef.current = false;
@@ -839,6 +881,15 @@ export default function App() {
 
   // 导出分析结果为 GIS 专业的 Shapefile 格式 (WGS84 坐标系)
   const exportSHP = () => {
+    // 【商业卡口二：GIS 矢量数据资产物理卡卡口】
+    if (!isVip) {
+      setVipModalTitle('🔒 导出 Shapefile 专属限制');
+      setVipModalDesc('由本引擎生成的具有精密拓扑坐标的 WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属的高阶资产保护文件。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
+      setIsVipModalOpen(true);
+      addLog('⚠️ 导出拦截：GIS 矢量资产导出（Shapefile）为 PRO 专业版专用功能，已被保护卡口拦截。');
+      return;
+    }
+
     const collection = turf.featureCollection(results.map(r => ({
       ...r.geometry,
       properties: {
@@ -886,28 +937,28 @@ export default function App() {
                 <span className="text-[10px] font-black text-slate-700 leading-none">
                   {user?.displayName || user?.email}
                 </span>
-                {user?.isTrial && (
-                  <div className={`flex items-center gap-2 px-2 py-0.5 rounded-full border transition-colors ${user.remaining <= 1 ? 'bg-red-500/10 border-red-500/20' : 'bg-amber-500/10 border-amber-500/20'}`}>
-                    <div className="flex gap-0.5">
-                      {[...Array(MAX_DEMO_USAGE)].map((_, i) => (
-                        <div 
-                          key={i} 
-                          className={`w-1.5 h-1.5 rounded-full ${i < (user.remaining || 0) ? (user.remaining <= 1 ? 'bg-red-500' : 'bg-amber-500') : 'bg-slate-200'}`}
-                        />
-                      ))}
-                    </div>
-                    <span className={`text-[9px] font-bold ${user.remaining <= 1 ? 'text-red-700' : 'text-amber-700'}`}>
-                      {user.remaining <= 1 ? '额度告急' : '试用'}: {user.remaining}/{MAX_DEMO_USAGE}
-                    </span>
-                  </div>
+                <StatusBadge 
+                  user={user} 
+                  onUpgradeClick={() => {
+                    setVipModalTitle('升级解锁 PRO 专业版算力特权');
+                    setVipModalDesc('升级您的账户以解锁无限量多站点并行批量运算、由于资产安全及核心隐私政策，标准 ArcGIS/QGIS 分层面要素 Shapefile（WGS84投影）为 PRO 专业版独享。');
+                    setIsVipModalOpen(true);
+                  }}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={handleLogout}
+                  className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter w-fit"
+                >
+                  Sign Out
+                </button>
+                {!user?.isTrial && user && isVip && vipExpiryDateStr && (
+                  <span className="text-[8px] text-amber-600 font-bold font-mono">
+                    • 尊享效期至 {vipExpiryDateStr}
+                  </span>
                 )}
               </div>
-              <button 
-                onClick={handleLogout}
-                className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter w-fit"
-              >
-                Sign Out
-              </button>
             </div>
           </div>
         </div>
@@ -1483,7 +1534,17 @@ export default function App() {
               {/* 报表顶部：标题及导出按钮 */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-800">分析成果统计</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-2xl font-bold text-slate-800">分析成果统计</h2>
+                    <StatusBadge 
+                      user={user} 
+                      onUpgradeClick={() => {
+                        setVipModalTitle('升级解锁 PRO 专业版算力特权');
+                        setVipModalDesc('升级您的账户以解锁无限量多站点并行批量运算、由于资产安全及核心隐私政策，标准 ArcGIS/QGIS 分层面要素 Shapefile（WGS84投影）为 PRO 专业版独享。');
+                        setIsVipModalOpen(true);
+                      }}
+                    />
+                  </div>
                   <p className="text-sm text-slate-500">共完成 {results.length} 个站点的可达性评估</p>
                 </div>
                 <div className="flex gap-3">
@@ -1558,6 +1619,15 @@ export default function App() {
         isOpen={isFeedbackOpen} 
         onClose={() => setIsFeedbackOpen(false)} 
         user={user}
+      />
+
+      {/* 商业化VIP专属授权服务激活弹窗 */}
+      <VipModal 
+        isOpen={isVipModalOpen} 
+        onClose={() => setIsVipModalOpen(false)} 
+        user={user}
+        title={vipModalTitle}
+        description={vipModalDesc}
       />
     </div>
   );

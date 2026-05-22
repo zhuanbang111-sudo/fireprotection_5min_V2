@@ -101,25 +101,76 @@ class D1PreparedStatement {
       // 1. 根据 email 查找
       if (sqlUpper.includes('SELECT') && sqlUpper.includes('WHERE EMAIL =')) {
         const bindEmail = this.params[0]?.toLowerCase().trim();
-        return users.filter((u: any) => u.email.toLowerCase() === bindEmail);
+        const found = users.filter((u: any) => u.email.toLowerCase() === bindEmail);
+        return found.map((u: any) => ({
+          vip_level: u.vip_level || 'free',
+          vip_expires_at: u.vip_expires_at || null,
+          ...u
+        }));
       }
 
       // 2. 根据 id 查找
       if (sqlUpper.includes('SELECT') && sqlUpper.includes('WHERE ID =')) {
         const bindId = this.params[0];
-        return users.filter((u: any) => u.id === bindId);
+        const found = users.filter((u: any) => u.id === bindId);
+        return found.map((u: any) => ({
+          vip_level: u.vip_level || 'free',
+          vip_expires_at: u.vip_expires_at || null,
+          ...u
+        }));
       }
 
       // 3. 注册新用户 insert into
       if (sqlUpper.includes('INSERT INTO')) {
         const [id, email, password_hash, displayName, created_at] = this.params;
-        const newUser = { id, email, password_hash, displayName, created_at };
+        const newUser = { 
+          id, 
+          email, 
+          password_hash, 
+          displayName, 
+          created_at, 
+          vip_level: 'free', 
+          vip_expires_at: null 
+        };
         users.push(newUser);
         await saveTable('users', users);
         return [newUser];
       }
 
-      return users;
+      // 4. 为本地模拟特定的 UPDATE ... SET ...
+      if (sqlUpper.includes('UPDATE')) {
+        const parts = this.sql.replace(/\s+/g, ' ');
+        const emailMatch = parts.match(/WHERE email\s*=\s*(['"]?)(.*?)\1/i);
+        const bindEmail = emailMatch ? emailMatch[2].toLowerCase().trim() : (this.params[this.params.length - 1]?.toLowerCase().trim() || '');
+        
+        let changed = false;
+        const updatedUsers = users.map((u: any) => {
+          if (u.email.toLowerCase() === bindEmail || u.id === this.params[this.params.length - 1]) {
+            changed = true;
+            // 简单把 params 里面的 pro 和到期时间填进去
+            const nextLevel = this.params.find(p => p === 'pro' || p === 'free') || 'pro';
+            // 获取可能包含 DATETIME 值的参数
+            const nextExpires = this.params.find(p => p && typeof p === 'string' && p.includes('-')) || new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+            return {
+              ...u,
+              vip_level: nextLevel,
+              vip_expires_at: nextExpires
+            };
+          }
+          return u;
+        });
+
+        if (changed) {
+          await saveTable('users', updatedUsers);
+        }
+        return [];
+      }
+
+      return users.map((u: any) => ({
+        vip_level: u.vip_level || 'free',
+        vip_expires_at: u.vip_expires_at || null,
+        ...u
+      }));
     }
 
     if (tableWord === 'feedbacks') {
@@ -289,7 +340,9 @@ apiRouter.post('/auth/register', async (req, res) => {
         uid: userId,
         email: lowerEmail,
         displayName: dName,
-        isTrial: false
+        isTrial: false,
+        vip_level: 'free',
+        vip_expires_at: null
       },
       session: {
         access_token: token
@@ -330,7 +383,9 @@ apiRouter.post('/auth/login', async (req, res) => {
         uid: user.id,
         email: user.email,
         displayName: user.displayName,
-        isTrial: false
+        isTrial: false,
+        vip_level: user.vip_level || 'free',
+        vip_expires_at: user.vip_expires_at || null
       },
       session: {
         access_token: token
@@ -367,7 +422,9 @@ apiRouter.get('/auth/me', async (req, res) => {
         uid: user.id,
         email: user.email,
         displayName: user.displayName,
-        isTrial: false
+        isTrial: false,
+        vip_level: user.vip_level || 'free',
+        vip_expires_at: user.vip_expires_at || null
       }
     });
   } catch (error: any) {

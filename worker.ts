@@ -169,7 +169,9 @@ app.post('/auth/register', async (c) => {
         uid: userId,
         email: lowerEmail,
         displayName: dName,
-        isTrial: false
+        isTrial: false,
+        vip_level: 'free',
+        vip_expires_at: null
       },
       session: {
         access_token: token
@@ -216,7 +218,9 @@ app.post('/auth/login', async (c) => {
         uid: user.id,
         email: user.email,
         displayName: user.displayName,
-        isTrial: false
+        isTrial: false,
+        vip_level: user.vip_level || 'free',
+        vip_expires_at: user.vip_expires_at || null
       },
       session: {
         access_token: token
@@ -258,7 +262,9 @@ app.get('/auth/me', async (c) => {
         uid: user.id,
         email: user.email,
         displayName: user.displayName,
-        isTrial: false
+        isTrial: false,
+        vip_level: user.vip_level || 'free',
+        vip_expires_at: user.vip_expires_at || null
       }
     });
   } catch (error: any) {
