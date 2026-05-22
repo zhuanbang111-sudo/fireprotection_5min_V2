@@ -431,6 +431,17 @@ export default function App() {
                   <span className="font-bold text-amber-400">💡 提示：</span>
                   演示目的请点击“快速试用”直接进入，无需注册。
                 </p>
+                {isHealthFetched && healthData && (
+                  <p className="text-[9px] text-slate-300 mt-2 border-t border-white/10 pt-1.5 leading-normal">
+                    当前环境: <span className="text-yellow-400 font-mono font-bold">{healthData.environment === 'cloudflare-workers' ? '🩵 Cloudflare Workers (D1 生产库)' : '🧡 AI Studio 本地沙盒 (JSON 仿真库)'}</span>
+                    <br />
+                    <span className="text-slate-400">
+                      {healthData.environment === 'cloudflare-workers' 
+                        ? '👉 注册信息会写入您真正的 Cloudflare D1 数据库。' 
+                        : 'ℹ️ 此时任何注册操作仅保存于本地 `.data/d1_storage.json` 备份文件中，不写入您 Cloudflare 的 D1 库。部署上线后，用户在生产页面的注册才会保存至您的 D1 数据库！'}
+                    </span>
+                  </p>
+                )}
               </div>
 
               {/* 选项卡切换 */}
