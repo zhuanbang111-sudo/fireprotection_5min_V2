@@ -288,41 +288,6 @@ export default function App() {
     };
   }, [healthData, isHealthFetched]);
 
-  const handleInstantTrial = async () => {
-    setIsLoading(true);
-    setAuthError('');
-    try {
-      // 尝试从本地缓存恢复试用 ID，以便维持计次
-      const savedUser = localStorage.getItem('fire_isochrone_user');
-      let trialId = null;
-      if (savedUser) {
-        try {
-          const parsed = JSON.parse(savedUser);
-          if (parsed.uid && parsed.uid.startsWith('demo-')) {
-            trialId = parsed.uid;
-          }
-        } catch (e) {}
-      }
-
-      const res = await axios.post('/api/auth/instant', { trialId });
-      if (res.data.success) {
-        const userData = {
-          ...res.data.user,
-          session: res.data.session // 演示账号可能没有 session，但保留结构一致性
-        };
-        setUser(userData);
-        localStorage.setItem('fire_isochrone_user', JSON.stringify(userData));
-        localStorage.setItem('fire_isochrone_user_active', 'true');
-        addLog(`🚀 试用模式启动！剩余试用额度: ${res.data.user.remaining} 次`);
-      }
-    } catch (e: any) {
-      console.error('[Auth] Instant trial error:', e);
-      setAuthError(e.response?.data?.message || '快速进入服务暂时不可用');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');

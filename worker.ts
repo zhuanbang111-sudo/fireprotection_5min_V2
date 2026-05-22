@@ -112,20 +112,6 @@ app.all('/health', (c) => {
   });
 });
 
-// 一键演示登录
-app.post('/auth/instant', async (c) => {
-  return c.json({ 
-    success: true, 
-    user: { 
-      uid: 'demo-999', 
-      email: 'demo@fire-engineer.local', 
-      displayName: '演示专家/指挥官',
-      isTrial: true,
-      remaining: MAX_DEMO_USAGE - demoUsageCount
-    } 
-  });
-});
-
 // 1. 用户注册
 app.post('/auth/register', async (c) => {
   try {

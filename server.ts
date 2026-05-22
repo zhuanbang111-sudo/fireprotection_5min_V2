@@ -282,24 +282,6 @@ const checkUsageLimit = async (req: any, res: any, next: any) => {
   return res.status(401).json({ success: false, message: '请登录后继续操作' });
 };
 
-// 途径 1: 极致简单的“一键演示”通道
-apiRouter.post('/auth/instant', (req, res) => {
-  const { trialId } = req.body;
-  const userId = trialId || `demo-${Math.random().toString(36).substring(2, 9)}`;
-  const currentCount = demoUsageMap.get(userId) || 0;
-  
-  res.json({ 
-    success: true, 
-    user: { 
-      uid: userId, 
-      email: 'demo@fire-engineer.local', 
-      displayName: '演示专家/指挥官',
-      isTrial: true,
-      remaining: MAX_DEMO_USAGE - currentCount
-    } 
-  });
-});
-
 // ---【Cloudflare D1-Style 账号登录与注册控制器接口】---
 
 // 1. 用户注册
