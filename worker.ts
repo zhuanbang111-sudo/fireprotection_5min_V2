@@ -272,7 +272,59 @@ app.get('/auth/me', async (c) => {
   }
 });
 
-// 4. 用户反馈提交
+// 4. 用户 VIP 激活与升级
+app.post('/auth/upgrade', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期，请重新登录' }, 401);
+    }
+
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+
+    const expiration = new Date();
+    expiration.setFullYear(expiration.getFullYear() + 1); // 1年有效期
+    const expiresStr = expiration.toISOString();
+
+    await DB.prepare("UPDATE users SET vip_level = 'pro', vip_expires_at = ? WHERE id = ?")
+      .bind(expiresStr, tokenData.userId)
+      .run();
+
+    console.log(`[D1 Auth Worker] 用户 VIP 已成功激活: ${user.email}`);
+
+    return c.json({
+      success: true,
+      message: '升级成功',
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false,
+        vip_level: 'pro',
+        vip_expires_at: expiresStr
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth Worker] 升级核心异常:', error);
+    return c.json({ success: false, message: error.message || '激活失败' }, 550);
+  }
+});
+
+// 5. 用户反馈提交
 app.post('/feedback', async (c) => {
   try {
     const body = await c.req.json();

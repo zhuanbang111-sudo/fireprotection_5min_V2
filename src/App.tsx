@@ -1626,6 +1626,10 @@ export default function App() {
         isOpen={isVipModalOpen} 
         onClose={() => setIsVipModalOpen(false)} 
         user={user}
+        onUpgradeSuccess={(updatedUser) => {
+          setUser(updatedUser);
+          localStorage.setItem('fire_isochrone_user', JSON.stringify(updatedUser));
+        }}
         title={vipModalTitle}
         description={vipModalDesc}
       />

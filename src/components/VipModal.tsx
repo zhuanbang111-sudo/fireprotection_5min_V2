@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, Smartphone } from 'lucide-react';
+import { X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, Smartphone, Loader2 } from 'lucide-react';
+import axios from 'axios';
 
 // ==========================================
 // PRO 商业版定价配置（可在代码中随时修改）
@@ -11,6 +12,7 @@ interface VipModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: any;
+  onUpgradeSuccess?: (updatedUser: any) => void;
   title?: string;
   description?: string;
 }
@@ -19,24 +21,53 @@ export const VipModal: React.FC<VipModalProps> = ({
   isOpen, 
   onClose, 
   user,
+  onUpgradeSuccess,
   title = "解锁 PRO 专业版算力特权",
   description = "您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心资产导出权限"
 }) => {
   const [showPayment, setShowPayment] = useState(false);
   const [paySuccess, setPaySuccess] = useState(false);
+  const [isUpgrading, setIsUpgrading] = useState(false);
+  const [upgradeError, setUpgradeError] = useState('');
+
+  const handleSimulatedPay = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) {
+      setUpgradeError('抱歉，激活服务需要您先“注册”或“登录”账号后，才能将 VIP 权限永久绑定至该账号！请先关闭此弹窗并于系统顶部注册或登录账号。');
+      return;
+    }
+
+    setIsUpgrading(true);
+    setUpgradeError('');
+    try {
+      const res = await axios.post('/api/auth/upgrade', {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (res.data.success) {
+        setPaySuccess(true);
+        if (onUpgradeSuccess && res.data.user) {
+          onUpgradeSuccess(res.data.user);
+        }
+        // 延迟 3 秒自动关闭并通知
+        setTimeout(() => {
+          setPaySuccess(false);
+          setShowPayment(false);
+          onClose();
+        }, 3000);
+      } else {
+        throw new Error(res.data.message || '激活失败');
+      }
+    } catch (e: any) {
+      console.error('[VIP Activation Error]:', e);
+      const errMsg = e.response?.data?.message || e.message || '网络通讯异常，请稍后再试';
+      setUpgradeError(`激活服务发生错误: ${errMsg}`);
+    } finally {
+      setIsUpgrading(false);
+    }
+  };
 
   if (!isOpen) return null;
-
-  const handleSimulatedPay = () => {
-    setPaySuccess(true);
-    // 延迟2秒自动关闭并提示
-    setTimeout(() => {
-      setPaySuccess(false);
-      setShowPayment(false);
-      onClose();
-      alert(`🎉 恭喜！您已成功登记！\n系统运维专线已收到关于 [ ${user?.email || '当前账号'} ] 的高级算力申请。对于种子期用户，审批极其迅速！如果您已经扫码，算力将在 1-5 分钟内自动开通！`);
-    }, 2500);
-  };
 
   return (
     <AnimatePresence>
@@ -299,13 +330,24 @@ export const VipModal: React.FC<VipModalProps> = ({
                     </p>
                   </div>
 
+                  {/* 错误信息展示 */}
+                  {upgradeError && (
+                    <div className="bg-red-500/10 border border-red-500/25 rounded-2xl p-3 text-[11px] text-red-400 font-medium">
+                      {upgradeError}
+                    </div>
+                  )}
+
                   {/* 扫码支付后按钮 */}
                   <div className="pt-2">
                     <button
                       onClick={handleSimulatedPay}
-                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-900/30 tracking-wider transition-all transform hover:scale-[1.01]"
+                      disabled={isUpgrading}
+                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-900/30 tracking-wider transition-all transform hover:scale-[1.01] flex items-center justify-center gap-2 ${
+                        isUpgrading ? 'opacity-70 cursor-not-allowed' : ''
+                      }`}
                     >
-                      我已扫码，立即激活高级服务
+                      {isUpgrading && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {isUpgrading ? '正在联系边缘网络云端授权...' : '我已扫码，立即激活高级服务'}
                     </button>
                   </div>
                 </div>

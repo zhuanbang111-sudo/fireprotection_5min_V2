@@ -432,6 +432,53 @@ apiRouter.get('/auth/me', async (req, res) => {
   }
 });
 
+// 4. 用户 VIP 激活与升级
+apiRouter.post('/auth/upgrade', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期，请重新登录' });
+    }
+
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+
+    const expiration = new Date();
+    expiration.setFullYear(expiration.getFullYear() + 1); // 1年有效期
+    const expiresStr = expiration.toISOString();
+
+    await env.DB.prepare("UPDATE users SET vip_level = 'pro', vip_expires_at = ? WHERE id = ?")
+      .bind(expiresStr, tokenData.userId)
+      .run();
+
+    console.log(`[D1 Auth] 用户 VIP 已成功激活: ${user.email}`);
+
+    res.json({
+      success: true,
+      message: '升级成功',
+      user: {
+        uid: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        isTrial: false,
+        vip_level: 'pro',
+        vip_expires_at: expiresStr
+      }
+    });
+  } catch (error: any) {
+    console.error('[D1 Auth] 升级异常:', error);
+    res.status(500).json({ success: false, message: '激活失败' });
+  }
+});
+
 // ---【系统状态】健康检查接口 ---
 apiRouter.all('/health', (req, res) => {
   res.json({ 
