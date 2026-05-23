@@ -966,7 +966,7 @@ export default function App() {
                 >
                   Sign Out
                 </button>
-                {(user?.vip_level === 'admin' || user?.email === 'zhuanbang111@gmail.com') && (
+                {(user?.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user?.email?.toLowerCase()?.trim() || '')) && (
                   <button
                     onClick={() => navigateTo('/admin')}
                     className="text-[9px] text-red-500 hover:text-red-600 font-black transition-colors uppercase tracking-tight flex items-center bg-red-50 border border-red-200/55 px-1.5 py-0.5 rounded ml-1.5 shadow-sm"

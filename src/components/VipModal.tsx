@@ -60,8 +60,8 @@ export const VipModal: React.FC<VipModalProps> = ({
     }, 4500);
   };
 
-  // 判断是否拥有全站超级管理员权限 (zhuanbang111@gmail.com 或高级 Admin 标签)
-  const isAdmin = user && (user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com');
+  // 判断是否拥有全站超级管理员权限 (zhuanbang111@gmail.com, 714400040@qq.com, zhuanbang111@foxmail.com 或高级 Admin 标签)
+  const isAdmin = user && (user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim()));
 
   // 获取服务端的全局收款码配置 (热更新)
   const fetchSystemQr = async () => {

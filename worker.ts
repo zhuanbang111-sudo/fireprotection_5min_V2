@@ -142,12 +142,15 @@ app.post('/auth/register', async (c) => {
     const dName = displayName || email.split('@')[0];
     const createdAt = new Date().toISOString();
 
-    await DB.prepare("INSERT INTO users (id, email, password_hash, displayName, created_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(userId, lowerEmail, pHash, dName, createdAt)
+    const isAdminEmail = ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(lowerEmail);
+    const initialVipLevel = isAdminEmail ? 'admin' : 'free';
+
+    await DB.prepare("INSERT INTO users (id, email, password_hash, displayName, created_at, vip_level) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(userId, lowerEmail, pHash, dName, createdAt, initialVipLevel)
       .run();
 
     const token = generateToken(userId);
-    console.log(`[D1 Auth Worker] 新用户注册成功: ${lowerEmail}`);
+    console.log(`[D1 Auth Worker] 新用户注册成功: ${lowerEmail} (Role: ${initialVipLevel})`);
 
     return c.json({
       success: true,
@@ -156,7 +159,7 @@ app.post('/auth/register', async (c) => {
         email: lowerEmail,
         displayName: dName,
         isTrial: false,
-        vip_level: 'free',
+        vip_level: initialVipLevel,
         vip_expires_at: null
       },
       session: {
@@ -198,6 +201,13 @@ app.post('/auth/login', async (c) => {
     const token = generateToken(user.id);
     console.log(`[D1 Auth Worker] 用户登录成功: ${lowerEmail}`);
 
+    const isAdminEmail = ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(lowerEmail);
+    let currentVipLevel = user.vip_level || 'free';
+    if (isAdminEmail && currentVipLevel !== 'admin') {
+      currentVipLevel = 'admin';
+      await DB.prepare("UPDATE users SET vip_level = 'admin' WHERE id = ?").bind(user.id).run();
+    }
+
     return c.json({
       success: true,
       user: {
@@ -205,7 +215,7 @@ app.post('/auth/login', async (c) => {
         email: user.email,
         displayName: user.displayName,
         isTrial: false,
-        vip_level: user.vip_level || 'free',
+        vip_level: currentVipLevel,
         vip_expires_at: user.vip_expires_at || null
       },
       session: {
@@ -242,6 +252,13 @@ app.get('/auth/me', async (c) => {
       return c.json({ success: false, message: '用户不存在' }, 401);
     }
 
+    const isAdminEmail = ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
+    let currentVipLevel = user.vip_level || 'free';
+    if (isAdminEmail && currentVipLevel !== 'admin') {
+      currentVipLevel = 'admin';
+      await DB.prepare("UPDATE users SET vip_level = 'admin' WHERE id = ?").bind(user.id).run();
+    }
+
     return c.json({
       success: true,
       user: {
@@ -249,7 +266,7 @@ app.get('/auth/me', async (c) => {
         email: user.email,
         displayName: user.displayName,
         isTrial: false,
-        vip_level: user.vip_level || 'free',
+        vip_level: currentVipLevel,
         vip_expires_at: user.vip_expires_at || null
       }
     });
@@ -377,7 +394,7 @@ app.post('/system/qr', async (c) => {
     if (!user) {
       return c.json({ success: false, message: '用户不存在' }, 401);
     }
-    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
     if (!isAdmin) {
       return c.json({ success: false, message: '无管理员操作权限' }, 403);
     }
@@ -459,7 +476,7 @@ app.get('/orders', async (c) => {
       return c.json({ success: false, message: '用户不存在' }, 401);
     }
 
-    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
     let ordersData: any;
     if (isAdmin) {
       ordersData = await DB.prepare("SELECT * FROM orders").all();
@@ -496,7 +513,7 @@ app.post('/orders/approve', async (c) => {
     if (!user) {
       return c.json({ success: false, message: '用户不存在' }, 401);
     }
-    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
     if (!isAdmin) {
       return c.json({ success: false, message: '无管理员操作权限' }, 403);
     }
