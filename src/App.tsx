@@ -41,6 +41,7 @@ import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组�
 import { VipModal } from './components/VipModal'; // 导入VIP专属弹层
 import { StatusBadge } from './components/StatusBadge'; // 导入 VIP 身份徽章组件
 import { SummaryReport } from './components/SummaryReport'; // 导入空间成果聚合报告组件
+import { AdminDashboard } from './components/AdminDashboard'; // 导入管理员对账中心
 
 // @ts-ignore
 import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
@@ -119,13 +120,17 @@ axios.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      console.warn('[Session] 会话已过期，正在清理...');
-      localStorage.removeItem('fire_isochrone_auth_token');
-      localStorage.removeItem('fire_isochrone_user');
-      // 仅在已登录状态下发生 401 时刷新，避免死循环
-      if (localStorage.getItem('fire_isochrone_user_active')) {
-        localStorage.removeItem('fire_isochrone_user_active');
-        window.location.reload();
+      const url = error.config?.url || '';
+      // 如果是用做登录或者注册，不能当作“会话令牌失效”做强制清理与强制重载
+      if (!url.includes('/api/auth/login') && !url.includes('/api/auth/register')) {
+        console.warn('[Session] 会话已过期，正在清理...');
+        localStorage.removeItem('fire_isochrone_auth_token');
+        localStorage.removeItem('fire_isochrone_user');
+        // 仅在已登录状态下发生 401 时刷新，避免死循环
+        if (localStorage.getItem('fire_isochrone_user_active')) {
+          localStorage.removeItem('fire_isochrone_user_active');
+          window.location.reload();
+        }
       }
     }
     return Promise.reject(error);
@@ -142,6 +147,24 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isBackendReady, setIsBackendReady] = useState(false);
+
+  // --- 全端微路由系统 (微前端单页接管核心) ---
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  const navigateTo = (path: string) => {
+    window.history.pushState({}, '', path);
+    setCurrentPath(path);
+  };
 
   // --- 商业及VIP特权追踪状态 ---
   const [isVipModalOpen, setIsVipModalOpen] = useState(false);
@@ -330,6 +353,23 @@ export default function App() {
       console.error('[LocalAuth] 发生认证错误:', error);
       let errMsg = '服务不可用或网络异常，请稍后重试';
       
+      if (error.response?.status === 401) {
+        // HTTP 401 肯定是授权/验证失败（包括账号或密码错误、未注册但尝试登录、凭证无效等）
+        const serverMsg = error.response.data?.message || '';
+        if (serverMsg === 'already registered') {
+          addLog('ℹ️ 自动切换：检测到该邮箱已注册，已为您切换为登录模式。');
+          setAuthError('该账号已经注册过了，已为您自动切换至登录模式。请直接在下方输入密码并点击“登录”。');
+          setIsRegistering(false);
+          setIsLoading(false);
+          return;
+        } else {
+          addLog('❌ 登录失败：账号密码有误、不存在或凭证错误。');
+          setAuthError('账号不存在或密码输入错误！请检查邮箱地址或密码。');
+          setIsLoading(false);
+          return;
+        }
+      }
+
       if (error.response?.data?.message) {
         const serverMsg = error.response.data.message;
         if (serverMsg === 'already registered') {
@@ -420,7 +460,7 @@ export default function App() {
                 FireIsochrone <span className="text-red-500">PRO V2</span>
               </h1>
               <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
-                {isRegistering ? '立即创建您的账号' : '消防仿真系统授权登录'}
+                {currentPath === '/admin' ? '请先登录管理员账号' : (isRegistering ? '立即创建您的账号' : '消防仿真系统授权登录')}
               </p>
             </div>
 
@@ -542,6 +582,17 @@ export default function App() {
           </div>
         </motion.div>
       </div>
+    );
+  }
+
+  // 后台对账管理决策仓渲染阻断
+  if (currentPath === '/admin') {
+    return (
+      <AdminDashboard
+        user={user}
+        onBack={() => navigateTo('/')}
+        onLogout={handleLogout}
+      />
     );
   }
 
@@ -915,6 +966,14 @@ export default function App() {
                 >
                   Sign Out
                 </button>
+                {(user?.vip_level === 'admin' || user?.email === 'zhuanbang111@gmail.com') && (
+                  <button
+                    onClick={() => navigateTo('/admin')}
+                    className="text-[9px] text-red-500 hover:text-red-600 font-black transition-colors uppercase tracking-tight flex items-center bg-red-50 border border-red-200/55 px-1.5 py-0.5 rounded ml-1.5 shadow-sm"
+                  >
+                    👑 进入后台
+                  </button>
+                )}
                 {!user?.isTrial && user && isVip && vipExpiryDateStr && (
                   <span className="text-[8px] text-amber-600 font-bold font-mono">
                     • 尊享效期至 {vipExpiryDateStr}

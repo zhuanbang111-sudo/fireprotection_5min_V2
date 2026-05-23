@@ -185,6 +185,61 @@ class D1PreparedStatement {
       return feedbacks;
     }
 
+    if (tableWord === 'system_configs') {
+      const configs = await loadTable('system_configs');
+      if (sqlUpper.includes('SELECT') && sqlUpper.includes('KEY =')) {
+        const bindKey = this.params[0] || '';
+        return configs.filter((c: any) => c.key === bindKey);
+      }
+      if (sqlUpper.includes('INSERT') || sqlUpper.includes('UPDATE') || sqlUpper.includes('REPLACE')) {
+        const [key, value] = this.params;
+        const index = configs.findIndex((c: any) => c.key === key);
+        if (index > -1) {
+          configs[index].value = value;
+        } else {
+          configs.push({ key, value });
+        }
+        await saveTable('system_configs', configs);
+        return [{ key, value }];
+      }
+      return configs;
+    }
+
+    if (tableWord === 'orders') {
+      const orders = await loadTable('orders');
+      if (sqlUpper.includes('INSERT INTO')) {
+        const [id, user_id, email, payment_method, amount, voucher_name, voucher_screenshot, status, created_at] = this.params;
+        const newOrder = { id, user_id, email, payment_method, amount, voucher_name, voucher_screenshot, status, created_at, updated_at: created_at };
+        orders.push(newOrder);
+        await saveTable('orders', orders);
+        return [newOrder];
+      }
+      if (sqlUpper.includes('UPDATE')) {
+        const [status, updated_at, id] = this.params;
+        let changed = false;
+        const updatedOrders = orders.map((o: any) => {
+          if (o.id === id) {
+            changed = true;
+            return { ...o, status, updated_at };
+          }
+          return o;
+        });
+        if (changed) {
+          await saveTable('orders', updatedOrders);
+        }
+        return [];
+      }
+      if (sqlUpper.includes('WHERE ID =')) {
+        const id = this.params[0];
+        return orders.filter((o: any) => o.id === id);
+      }
+      if (sqlUpper.includes('WHERE USER_ID =')) {
+        const userId = this.params[0];
+        return orders.filter((o: any) => o.user_id === userId);
+      }
+      return orders;
+    }
+
     return [];
   }
 }
@@ -458,6 +513,183 @@ apiRouter.post('/auth/upgrade', async (req, res) => {
   } catch (error: any) {
     console.error('[D1 Auth] 升级异常:', error);
     res.status(500).json({ success: false, message: '激活失败' });
+  }
+});
+
+// ==========================================
+// 💳 【D1-STYLE TRANSACTION & CONTROL PIPELINE】
+// ==========================================
+
+// 1. 获取全局唯一的系统收款码 (任何用户均可访问，支持热加载)
+apiRouter.get('/system/qr', async (req, res) => {
+  try {
+    const qrConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    res.json({
+      success: true,
+      qrUrl: qrConfig?.value || process.env.VITE_PAYMENT_QR_CODE_URL || ''
+    });
+  } catch (e: any) {
+    res.json({ success: false, qrUrl: '' });
+  }
+});
+
+// 2. 超级管理员安全配置收款码 (只限 vip_level === 'admin' 或 master admin 邮箱)
+apiRouter.post('/system/qr', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, message: '无管理员操作权限' });
+    }
+
+    const { qrUrl } = req.body;
+    await env.DB.prepare("INSERT INTO system_configs (key, value) VALUES (?, ?)")
+      .bind('payment_qr_code_url', qrUrl || '')
+      .run();
+
+    console.log(`[Admin Control] 收款信息已被管理员 ${user.email} 升级为自定义源`);
+    res.json({ success: true, message: '收款码更新成功', qrUrl });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || '系统错误' });
+  }
+});
+
+// 3. 用户提交转账核验申请订单
+apiRouter.post('/orders', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '请先登录账号后提交转账记录' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期，请重新登录' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+
+    const { paymentMethod, amount, voucherName, voucherScreenshot } = req.body;
+    if (!voucherName) {
+      return res.status(400).json({ success: false, message: '请填写转账昵称或支付凭证号以供比对' });
+    }
+
+    const orderId = `ord_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    
+    await env.DB.prepare("INSERT INTO orders (id, user_id, email, payment_method, amount, voucher_name, voucher_screenshot, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(orderId, user.id, user.email, paymentMethod || '微信/支付宝', amount || 399, voucherName, voucherScreenshot || '', 'pending', createdAt)
+      .run();
+
+    console.log(`[Order Processing] 用户 ${user.email} 新提交一笔订单: ID=${orderId}, 凭证=${voucherName}`);
+    res.json({ success: true, message: '账单凭证提交成功！系统管理员核款确收后会自动极速升级您的账号。', orderId });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || '账单提交异常' });
+  }
+});
+
+// 4. 获取订单记录 (用户查看自己的申请历史，管理员一览全局)
+apiRouter.get('/orders', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    let orders: any = [];
+    if (isAdmin) {
+      orders = await env.DB.prepare("SELECT * FROM orders").all();
+    } else {
+      orders = await env.DB.prepare("SELECT * FROM orders WHERE user_id = ?").bind(user.id).all();
+    }
+
+    // 处理 SQL prepare 返回的数据格式并升序/降序展示
+    const rawOrders = Array.isArray(orders) ? orders : ((orders as any).results || []);
+    const sortedOrders = [...rawOrders].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    res.json({ success: true, orders: sortedOrders });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || '系统错误' });
+  }
+});
+
+// 5. 超级管理员：一键手动审批或作废订单、联动解锁 Pro
+apiRouter.post('/orders/approve', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, message: '无管理员操作权限' });
+    }
+
+    const { orderId, status } = req.body; // status: 'success' | 'rejected'
+    if (!orderId || !status) {
+      return res.status(400).json({ success: false, message: '订单ID和状态(status)为必填项' });
+    }
+
+    const order = await env.DB.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
+    if (!order) {
+      return res.status(404).json({ success: false, message: '目标账单未找到' });
+    }
+
+    const updatedAt = new Date().toISOString();
+    await env.DB.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status, updatedAt, orderId)
+      .run();
+
+    if (status === 'success') {
+      const expiration = new Date();
+      expiration.setFullYear(expiration.getFullYear() + 1); // 账期 1 年
+      const expiresStr = expiration.toISOString();
+
+      await env.DB.prepare("UPDATE users SET vip_level = 'pro', vip_expires_at = ? WHERE id = ?")
+        .bind(expiresStr, order.user_id)
+        .run();
+      
+      console.log(`[Admin Action] 订单审核通过，成功赋权: 用户=${order.email}, 到期时间=${expiresStr}`);
+    } else {
+      console.log(`[Admin Action] 订单审核拒绝/作废: ID=${orderId}, 申请者=${order.email}`);
+    }
+
+    res.json({ success: true, message: `账单已审核更新为: ${status === 'success' ? '已支付过账' : '异常拒绝'}` });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || '审核处理异常' });
   }
 });
 

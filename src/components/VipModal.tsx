@@ -1,12 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, Smartphone, Loader2, Settings, Upload } from 'lucide-react';
+import { 
+  X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, 
+  ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, 
+  Smartphone, Loader2, Settings, Upload 
+} from 'lucide-react';
 import axios from 'axios';
 
 // ==========================================
 // PRO 商业版定价配置（可在代码中随时修改）
 // ==========================================
-const PRO_PRICE = 0.00; // 默认 0.00 元，支持随时更改，例如 299.00
+const PRO_PRICE = 399.00; // 默认 399.00 元，支持随时更改，例如 299.00 / 0.00
 
 interface VipModalProps {
   isOpen: boolean;
@@ -25,20 +29,89 @@ export const VipModal: React.FC<VipModalProps> = ({
   title = "解锁 PRO 专业版算力特权",
   description = "您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心资产导出权限"
 }) => {
+  const [activeTab, setActiveTab] = useState<'user' | 'admin'>('user');
   const [showPayment, setShowPayment] = useState(false);
   const [paySuccess, setPaySuccess] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState('');
 
-  // 自定义可替换收单收款码配置状态
-  const [customQrUrl, setCustomQrUrl] = useState(() => {
-    return localStorage.getItem('custom_payment_qr') || import.meta.env.VITE_PAYMENT_QR_CODE_URL || '';
-  });
-  const [isEditingQr, setIsEditingQr] = useState(false);
-  const [tempQrUrl, setTempQrUrl] = useState(customQrUrl);
+  // 1. 系统配置数据绑定的收款码
+  const [customQrUrl, setCustomQrUrl] = useState('');
+  
+  // 2. 交易凭证与申领登记表
+  const [voucherName, setVoucherName] = useState('');
+  const [voucherScreenshot, setVoucherScreenshot] = useState('');
+  
+  // 3. 管理端数据与操作状态
+  const [adminQrUrl, setAdminQrUrl] = useState('');
+  const [orders, setOrders] = useState<any[]>([]);
+  const [isConfigSaving, setIsConfigSaving] = useState(false);
+  const [isOrdersLoading, setIsOrdersLoading] = useState(false);
 
-  // 本地拖拽或文件选择读取为 Base64 替换接口
-  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 4. 双重确认状态与弹窗 Toast 代理 (解决 iframe 禁 alert/confirm 阻断点击及无响应的问题)
+  const [activeConfirmAction, setActiveConfirmAction] = useState<{ order: any; status: 'success' | 'rejected' } | null>(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMsg({ text, type });
+    setTimeout(() => {
+      setToastMsg(null);
+    }, 4500);
+  };
+
+  // 判断是否拥有全站超级管理员权限 (zhuanbang111@gmail.com 或高级 Admin 标签)
+  const isAdmin = user && (user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com');
+
+  // 获取服务端的全局收款码配置 (热更新)
+  const fetchSystemQr = async () => {
+    try {
+      const res = await axios.get('/api/system/qr');
+      if (res.data.success) {
+        setCustomQrUrl(res.data.qrUrl);
+        setAdminQrUrl(res.data.qrUrl);
+      }
+    } catch (e) {
+      console.error('[Checkout] 获取服务端收款配置出错:', e);
+    }
+  };
+
+  // 获取订单凭证列表 (非 Admin 仅查个人，Admin 纵览全局)
+  const fetchOrders = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+    setIsOrdersLoading(true);
+    try {
+      const res = await axios.get('/api/orders', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data.success) {
+        setOrders(res.data.orders || []);
+      }
+    } catch (e) {
+      console.error('[Checkout] 挂载凭证账单列表出错:', e);
+    } finally {
+      setIsOrdersLoading(false);
+    }
+  };
+
+  // 挂载加载
+  useEffect(() => {
+    if (isOpen) {
+      fetchSystemQr();
+      fetchOrders();
+      // 默认流式复位
+      setShowPayment(false);
+      setPaySuccess(false);
+      setUpgradeError('');
+      setVoucherName('');
+      setVoucherScreenshot('');
+      setActiveTab('user');
+    }
+  }, [isOpen]);
+
+  // 处理管理员本地替换上传 (Base64)
+  const handleAdminLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
@@ -46,50 +119,136 @@ export const VipModal: React.FC<VipModalProps> = ({
     reader.onload = (event) => {
       const base64 = event.target?.result as string;
       if (base64) {
-        setTempQrUrl(base64);
-        setUpgradeError(''); // 清空旧错误
+        setAdminQrUrl(base64);
+        setUpgradeError('');
       }
     };
     reader.onerror = () => {
-      setUpgradeError('读取图片文件失败，请重试或换用图片 URL 链接。');
+      setUpgradeError('读取图片大文件失败，请尝试其他格式。');
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSimulatedPay = async () => {
+  // 处理用户离线转账截图转换为 Base64 凭证
+  const handleVoucherScreenshotChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        setVoucherScreenshot(base64);
+        setUpgradeError(''); // 复位错误提示
+      }
+    };
+    reader.onerror = () => {
+      setUpgradeError('读取转账截图失败，请重试。');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 提交订单凭据 (转账核验申请)
+  const handleSubmitOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
     const token = localStorage.getItem('fire_isochrone_auth_token');
     if (!token) {
       setUpgradeError('抱歉，激活服务需要您先“注册”或“登录”账号后，才能将 VIP 权限永久绑定至该账号！请先关闭此弹窗并于系统顶部注册或登录账号。');
       return;
     }
 
+    if (!voucherName.trim()) {
+      setUpgradeError('请输入转账人的支付宝/微信账号昵称，或转账账单后 4 位，以便财务比对激活！');
+      return;
+    }
+
     setIsUpgrading(true);
     setUpgradeError('');
     try {
-      const res = await axios.post('/api/auth/upgrade', {}, {
+      const res = await axios.post('/api/orders', {
+        paymentMethod: '微信/支付宝扫码',
+        amount: PRO_PRICE,
+        voucherName: voucherName.trim(),
+        voucherScreenshot: voucherScreenshot
+      }, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (res.data.success) {
         setPaySuccess(true);
-        if (onUpgradeSuccess && res.data.user) {
-          onUpgradeSuccess(res.data.user);
-        }
-        // 延迟 3 秒自动关闭并通知
-        setTimeout(() => {
-          setPaySuccess(false);
-          setShowPayment(false);
-          onClose();
-        }, 3000);
+        fetchOrders(); // 刷新本地列表
       } else {
-        throw new Error(res.data.message || '激活失败');
+        throw new Error(res.data.message || '凭证申请失败');
       }
     } catch (e: any) {
-      console.error('[VIP Activation Error]:', e);
-      const errMsg = e.response?.data?.message || e.message || '网络通讯异常，请稍后再试';
-      setUpgradeError(`激活服务发生错误: ${errMsg}`);
+      console.error('[Submit Order Error]', e);
+      setUpgradeError(e.response?.data?.message || e.message || '网络繁忙，凭证转账申请未成功传送');
     } finally {
       setIsUpgrading(false);
+    }
+  };
+
+  // 管理员保存系统全局配置
+  const handleSaveSystemQr = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+
+    setIsConfigSaving(true);
+    try {
+      const res = await axios.post('/api/system/qr', {
+        qrUrl: adminQrUrl
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.success) {
+        setCustomQrUrl(res.data.qrUrl);
+        showToast('🎉 全局云端收款码热部署上线！全体普通访客现在将直接显示此新收款信息。', 'success');
+      } else {
+        throw new Error(res.data.message || '保存配置失败');
+      }
+    } catch (e: any) {
+      console.error('[Save Config Error]', e);
+      showToast(e.response?.data?.message || '配置上传失败', 'error');
+    } finally {
+      setIsConfigSaving(false);
+    }
+  };
+
+  // 管理员一键确收、升级过账
+  const handleApproveOrderExecute = async (orderId: string, status: 'success' | 'rejected') => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+
+    setIsActionLoading(true);
+    setActiveConfirmAction(null);
+    try {
+      const res = await axios.post('/api/orders/approve', {
+        orderId,
+        status
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.success) {
+        fetchOrders(); // 刷新全局数据
+        showToast(`🎉 审批指令执行成功！ ${status === 'success' ? '核心 PRO 算力已秒级拨付到该用户账户。' : '账单已标红作废。'}`, 'success');
+
+        // 如果刚好是在核验自己账单，一并主动回调刷新主站状态
+        const matched = orders.find(o => o.id === orderId);
+        if (matched && status === 'success') {
+          if (onUpgradeSuccess) {
+            onUpgradeSuccess({ ...user, vip_level: 'pro' });
+          }
+        }
+      } else {
+        showToast(res.data.message || '操作异常', 'error');
+      }
+    } catch (e: any) {
+      console.error('[Approve Action Error]', e);
+      showToast(e.response?.data?.message || '无法提交审批请求', 'error');
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
@@ -109,7 +268,7 @@ export const VipModal: React.FC<VipModalProps> = ({
               onClose();
             }
           }}
-          className="absolute inset-0 bg-slate-900/65 backdrop-blur-md"
+          className="absolute inset-0 bg-slate-950/80 backdrop-blur-md"
         />
 
         {/* 升级卡片主容器 */}
@@ -117,7 +276,7 @@ export const VipModal: React.FC<VipModalProps> = ({
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
-          className="relative w-full max-w-lg my-auto bg-gradient-to-b from-slate-900 to-slate-950 text-slate-100 rounded-3xl border border-amber-500/30 shadow-[0_25px_50px_-12px_rgba(245,158,11,0.15)] max-h-[90vh] overflow-y-auto z-10 p-6 sm:p-8"
+          className="relative w-full max-w-xl my-auto bg-gradient-to-b from-slate-900 to-slate-950 text-slate-100 rounded-3xl border border-amber-500/30 shadow-[0_25px_50px_-12px_rgba(245,158,11,0.15)] max-h-[92vh] overflow-y-auto z-10 p-6 sm:p-7"
         >
           {/* 金黄色渐变背景修饰 */}
           <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -136,7 +295,205 @@ export const VipModal: React.FC<VipModalProps> = ({
             </button>
           )}
 
-          {!showPayment ? (
+          {/* Custom Toast Message Alert Overlay (解决 iframe 阻断系统 alert 的优秀方案) */}
+          <AnimatePresence>
+            {toastMsg && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10, scale: 0.98 }}
+                className={`mb-5 p-3.5 rounded-2xl text-xs font-black shadow-lg border flex items-center gap-2 ${
+                  toastMsg.type === 'success'
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 shadow-emerald-900/10'
+                    : toastMsg.type === 'error'
+                    ? 'bg-rose-500/15 text-rose-300 border-rose-500/30 shadow-rose-900/10'
+                    : 'bg-slate-800 text-slate-200 border-slate-700/60'
+                }`}
+              >
+                <Sparkles className="w-4 h-4 shrink-0 animate-pulse text-amber-400" />
+                <span>{toastMsg.text}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* 👑 管理员双卡页快捷切换导轨 (仅管理员可见) */}
+          {isAdmin && (
+            <div className="flex bg-slate-950/90 rounded-2xl p-1 mb-5 border border-white/5 w-fit">
+              <button
+                maxLength={40}
+                type="button"
+                onClick={() => setActiveTab('user')}
+                className={`px-4 py-1.5 text-xs font-black rounded-xl transition-all ${
+                  activeTab === 'user' 
+                    ? 'bg-amber-500/90 text-slate-950 shadow-md shadow-amber-500/15'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                💳 收单前台面板
+              </button>
+              <button
+                maxLength={40}
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className={`px-4 py-1.5 text-xs font-black rounded-xl transition-all ${
+                  activeTab === 'admin' 
+                    ? 'bg-rose-500 text-white shadow-md shadow-rose-500/15'
+                    : 'text-rose-400 hover:text-rose-300'
+                }`}
+              >
+                ⚙️ 管理控制舱 (Admin)
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'admin' && isAdmin ? (
+            /* ================= 管理后台超级仪表盘面板 ================= */
+            <div className="space-y-6">
+              <div className="border-b border-rose-500/15 pb-4">
+                <h3 className="text-base font-black text-rose-300 flex items-center gap-1.5">
+                  <Settings className="w-5 h-5 animate-spin duration-3000" />
+                  D1 财务及云支付安全配置中心
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-0.5 font-mono">ROOT MASTER CONSOLE • ZH_ENG CONTROL PANEL</p>
+              </div>
+
+              {/* 1. 云端收款码管控配置 */}
+              <div className="bg-slate-950/60 rounded-2xl p-4 border border-rose-500/10 space-y-4 shadow-inner">
+                <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                  🔧 配置系统唯一收款码 (D1 映射)
+                </span>
+                
+                <div className="space-y-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 block font-bold">方案 A: 输入收款静态码网络 URL 链接</label>
+                    <input
+                      type="text"
+                      value={adminQrUrl}
+                      onChange={(e) => setAdminQrUrl(e.target.value)}
+                      placeholder="如: https://fire.local/pay-code.png"
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-rose-500 font-mono text-[11px]"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 block font-bold">方案 B: 快捷上传本地付款码截图 (自动转换 Base64 持久化)</label>
+                    <div className="flex gap-2">
+                      <label className="flex-1 flex items-center justify-center gap-1.5 border border-dashed border-slate-800 hover:border-rose-500/30 rounded-xl py-2 px-3 bg-slate-900/50 hover:bg-slate-900 hover:text-rose-400 cursor-pointer text-[10px] font-bold transition-all">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>加载本地收款码截图</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleAdminLocalFileChange}
+                          className="hidden"
+                        />
+                      </label>
+                      {adminQrUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setAdminQrUrl('')}
+                          className="px-3 bg-rose-950/30 text-rose-400 rounded-xl text-[10px] border border-rose-900/30 font-bold"
+                        >
+                          重置默认
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveSystemQr}
+                    disabled={isConfigSaving}
+                    className="w-full py-2 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 text-white rounded-xl text-xs font-black tracking-wider shadow-lg shadow-rose-950/40 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isConfigSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '💾 热更新部署至 D1 数据库'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. 待审/已批订单账目审计表 */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                    📑 扫码付款申请流水 (Orders Matrix)
+                  </span>
+                  <button
+                    onClick={fetchOrders}
+                    className="text-[10px] text-slate-400 hover:text-white bg-white/5 border border-white/5 px-2 py-1 rounded"
+                  >
+                    刷新账单
+                  </button>
+                </div>
+
+                {isOrdersLoading ? (
+                  <div className="py-10 text-center text-xs text-slate-500">正在调取云端账单流水...</div>
+                ) : orders.length === 0 ? (
+                  <div className="py-8 bg-slate-950/30 rounded-2xl border border-white/5 text-center text-[11px] text-slate-500">
+                    目前尚未收到交易审批账目，用户提交凭证后会自动显示于此处
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {orders.map((item) => (
+                      <div key={item.id} className="bg-slate-950/70 border border-slate-800/60 rounded-xl p-3.5 space-y-3 text-xs leading-normal">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <p className="font-bold text-slate-100 font-mono text-[11px]">单号: {item.id}</p>
+                            <p className="text-[10px] text-slate-500 mt-0.5">申请者: {item.email}</p>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
+                            item.status === 'success' 
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              : item.status === 'rejected'
+                              ? 'bg-slate-800 text-slate-500 border border-slate-700/60'
+                              : 'bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse'
+                          }`}>
+                            {item.status === 'success' ? 'SUCCESS 已过账' : item.status === 'rejected' ? 'REJECTED 已驳回' : 'PENDING 待确收'}
+                          </span>
+                        </div>
+
+                        <div className="bg-slate-900/50 p-2.5 rounded-lg space-y-1 text-[11px] font-mono border border-slate-900">
+                          <div>转账人核对凭证: <span className="text-amber-300 font-bold">{item.voucher_name}</span></div>
+                          <div>交易拟定金额: <span className="text-emerald-400">￥{item.amount}</span></div>
+                          <div className="text-[10px] text-slate-500">创建于: {new Date(item.created_at).toLocaleString()}</div>
+                        </div>
+
+                        {item.voucher_screenshot && (
+                          <div className="bg-slate-900/30 rounded-lg p-1 text-center border border-slate-800/40">
+                            <span className="text-[9px] text-rose-300 block mb-1 font-bold">付款截图凭证预览：</span>
+                            <img
+                              src={item.voucher_screenshot}
+                              className="max-h-40 max-w-full rounded mx-auto object-contain cursor-zoom-in"
+                              alt="Voucher"
+                              referrerPolicy="no-referrer"
+                            />
+                          </div>
+                        )}
+
+                        {item.status === 'pending' && (
+                          <div className="flex gap-2 mt-2 pt-2 border-t border-slate-800/40">
+                            <button
+                              type="button"
+                              onClick={() => setActiveConfirmAction({ order: item, status: 'rejected' })}
+                              className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] font-bold rounded-xl border border-slate-800/45 transition-all cursor-pointer"
+                            >
+                              ❌ 驳回订单
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveConfirmAction({ order: item, status: 'success' })}
+                              className="flex-1 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-[10px] font-black rounded-xl transition-all shadow-md shadow-emerald-900/15 cursor-pointer"
+                            >
+                              ✅ 确认过账 (自动升级用户)
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : !showPayment ? (
             /* ================= 主特权介绍页面 ================= */
             <>
               {/* 模态框头部 */}
@@ -162,11 +519,11 @@ export const VipModal: React.FC<VipModalProps> = ({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
-                      批量计算超高能效
-                      <span className="text-[9px] bg-red-505/10 text-rose-400 font-mono font-bold">免除单点限制</span>
+                      批量计算保护专线
+                      <span className="text-[9px] bg-amber-500/10 text-amber-400 font-mono font-bold">免除单点限制</span>
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                      免费版单次仅允许生成 1 个消防站等时圈。而专业版无多点限制，支持几百个车库地址、上万站点一键批量全自动并发测算。
+                      免费版单次仅允许生成第一个消防工作点。升级 PRO 专业版，支持无限地点批量投放、全自动多站点并行精密等时圈测算。
                     </p>
                   </div>
                 </div>
@@ -178,11 +535,11 @@ export const VipModal: React.FC<VipModalProps> = ({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
-                      标准 GIS 矢量数据导出 (WGS84 Shapefile) 🔒
+                      标准 GIS 矢量数据一秒导出 (WGS84 Shapefile) 🔒
                       <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-bold">高价值</span>
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                      一键导出完全标准的 GIS 面要素成果，直接对接 ArcGIS、QGIS、Mapbox、SuperMap 进行深度制图规划。
+                      一键快速下载带有地理测距坐标的精密 WGS84 消防空间覆盖多边形（Shapefile 压包格式），轻松在 ArcGIS、QGIS 进行深度专业制图。
                     </p>
                   </div>
                 </div>
@@ -194,10 +551,10 @@ export const VipModal: React.FC<VipModalProps> = ({
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-slate-100">
-                      物理隔离企业级高带宽算力专线
+                      多维度全景空间分析聚合报告 (Summary PDF)
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                      享用专属边缘加速计算节点，避开公共信道拥堵，支持极速多点投放并提供更稳定的 AMap WebService 查询保障。
+                      智能整合已生成的所有站点等时圈面积、覆盖消防缺口、人口承载力和地理几何，生成图文并茂的规划成果决策汇总。
                     </p>
                   </div>
                 </div>
@@ -207,19 +564,19 @@ export const VipModal: React.FC<VipModalProps> = ({
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-3.5 my-4">
                 <h5 className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 animate-bounce" /> 
-                  运维与授权一触即达
+                  账单登记与授权一触即达
                 </h5>
                 <p className="text-[10px] text-slate-300 mt-1 leading-normal">
-                  本系统采用轻量化企业授权。如您所在设计院、规划院或项目处需要常态化计算等时圈：
+                  本系统采用云服务 D1 自动核验机制。如您所在设计院、消防大队、研究所需要常态化开通使用：
                 </p>
                 <div className="mt-2 space-y-1.5 text-[10px] text-slate-400">
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span>联系负责专家提供特定邮箱：<span className="text-amber-200 underline font-mono select-all ml-1">{user?.email || '您的注册邮箱'}</span></span>
+                    <span>特定绑定邮箱档案：<span className="text-amber-200 underline font-mono select-all ml-1">{user?.email || '您的注册邮箱'}</span></span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    <span>通过 D1 付费登记开通，随时支持在下方激活服务。</span>
+                    <span>扫描专属收款展示页转入开通，并在页面一键提交，静候管理员 1 分钟一键通过！</span>
                   </div>
                 </div>
               </div>
@@ -236,7 +593,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                   onClick={() => setShowPayment(true)}
                   className="w-full sm:w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-slate-950 font-black text-xs hover:from-amber-400 hover:to-amber-500 shadow-lg shadow-amber-900/30 hover:shadow-amber-500/30 flex items-center justify-center gap-1.5 group transition-all"
                 >
-                  一键申请 / 极速审批
+                  一键扫码 / 自主登记
                   <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                 </button>
               </div>
@@ -261,7 +618,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                 <div>
                   <h3 className="text-base font-black text-slate-100 flex items-center gap-1.5">
                     <QrCode className="w-5 h-5 text-amber-400" />
-                    安全收单支付中心
+                    安全收单自助结算中心
                   </h3>
                   <p className="text-[10px] text-slate-400">正在为账号: {user?.email || '当前注册终端'} 下发高级服务</p>
                 </div>
@@ -273,245 +630,282 @@ export const VipModal: React.FC<VipModalProps> = ({
                   <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 rounded-full flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.2)] animate-[bounce_1.5s_infinite]">
                     <Check className="w-8 h-8" strokeWidth={3} />
                   </div>
-                  <h4 className="text-base font-black text-emerald-300">账单及提请发送成功！</h4>
+                  <h4 className="text-base font-black text-emerald-300">付款核对凭据已安全过账！</h4>
                   <p className="text-xs text-slate-400 text-center max-w-sm leading-relaxed">
-                    种子用户免付通道激活。云数据库正向代理将自动对您的邮箱 <span className="text-amber-300 font-mono underline">{user?.email}</span> 映射开通全能权限，即将自动返回地图。
+                    您的登记订单（单号自动下发）已被 D1 云数据库安全锁存。管理员将在 1-5 分钟内核实钱款微信/支付宝到账，后台一键过账开通。
+                    系统已自动为您载入申请历史。感谢您的鼎力支持！
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaySuccess(false);
+                      setShowPayment(false);
+                      onClose();
+                    }}
+                    className="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+                  >
+                    返回地图
+                  </button>
                 </div>
               ) : (
                 /* ============= 收单二维码主页面 ============= */
                 <div className="space-y-5">
                   {/* 金额展示区域 */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 text-center relative overflow-hidden">
-                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版终身开通服务</p>
+                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版终身授权费用</p>
                     <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 font-sans tracking-tight">
                       ￥{PRO_PRICE.toFixed(2)} 元
                     </div>
-                    {PRO_PRICE === 0 && (
-                      <span className="inline-block mt-1.5 text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/35 px-2 py-0.5 rounded-full font-bold">
-                        🎁 种子用户 0 元极速审批，直接扫码登记
-                      </span>
-                    )}
                   </div>
 
-                  {/* 收费二维码 (支持动态配置微信/支付宝自定义收款码图片或自动使用内置全能矢量 SVG 模拟) */}
-                  <div className="flex flex-col items-center space-y-3">
-                    <div className="relative p-3 bg-white rounded-3xl shadow-[0_0_30px_rgba(245,158,11,0.1)] border-2 border-amber-500/30">
-                      {/* 二维码外边框炫彩边 */}
-                      <div className="absolute inset-x-0 -top-1 mx-auto w-24 h-1 bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full" />
-                      
-                      {customQrUrl ? (
-                        <img 
-                          src={customQrUrl} 
-                          className="w-40 h-40 object-contain rounded-2xl mx-auto" 
-                          alt="自定义收款二维码" 
-                          referrerPolicy="no-referrer"
-                          onError={() => {
-                            setUpgradeError('自定义收款二维码图片加载失败，请检查链接配置或重新上传。');
-                          }}
-                        />
-                      ) : (
-                        /* 纯 SVG 大气二维码图形 */
-                        <svg
-                          className="w-40 h-40 text-slate-900"
-                          viewBox="0 0 100 100"
-                          shapeRendering="crispEdges"
-                        >
-                          {/* 四角定位图案 (Finder patterns) */}
-                          <path d="M0 0h25v25H0zm3 3v19h19V3zm3 3h13v13H6z" fill="currentColor" />
-                          <path d="M75 0h25v25H75zm3 3v19h19V3zm3 3h13v13H81z" fill="currentColor" />
-                          <path d="M0 75h25v25H0zm3 18v19h19V78zm3 3h13v13H6z" fill="currentColor" />
-                          
-                          {/* 三处定位点（内角） */}
-                          <rect x="9" y="9" width="7" height="7" fill="currentColor" />
-                          <rect x="84" y="9" width="7" height="7" fill="currentColor" />
-                          <rect x="9" y="84" width="7" height="7" fill="currentColor" />
-
-                          {/* 几何风格的 QR 像素颗粒线条（表示包含用户信息） */}
-                          <path d="M30 4h5v5h-5zm0 10h10v5H30zm15-10h15v5H45zm5 10h5v8h-5zm10-5h5v5h-5zm-35 25h10v5H20zm15 5h5v5h-5zm5-5h10v5H40zm15 0h5v8h-5zm10-5h15v5H65zm-25 15h12v5H40zm20 5h5v5h-5zm10-5h5v10H70zm-45 15h15v5H25zm20 0h5v5h-5zm10-10h10v5H55zm15 5h10v5H70z" fill="currentColor" />
-                          <path d="M30 60h5v10h-5zm10 5h12v5H40zm15-5h5v5h-5zm5 10h10v5H60zm15-10h15v5H75zm0 15h5v5h-5z" fill="currentColor" />
-                          
-                          {/* 中间嵌入一个精致的 VIP 聚焦点 */}
-                          <rect x="42" y="42" width="16" height="16" rx="4" fill="#f59e0b" />
-                          <path d="M47 52l1.5-3 1.5 3h-3zm4 0l1.5-3 1.5 3h-3z" fill="#0f172a" />
-                        </svg>
-                      )}
-
-                      {/* 二维码中心金色 LOGO 文字 (在使用默认 SVG 时显示) */}
-                      {!customQrUrl && (
-                        <div className="absolute inset-0 m-auto w-8 h-8 rounded-full bg-slate-900 border border-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
-                          <Crown className="w-4 h-4 text-amber-400" />
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div className="flex flex-col items-center gap-2 w-full">
-                      <div className="flex gap-4 text-slate-300 text-xs items-center">
-                        <span className="flex items-center gap-1 font-bold">
-                          <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                          微信支付
-                        </span>
-                        <span className="text-slate-600">|</span>
-                        <span className="flex items-center gap-1 font-bold">
-                          <Smartphone className="w-3.5 h-3.5 text-sky-400" />
-                          支付宝扫码
-                        </span>
-                      </div>
-
-                      {/* 自定义替换的快捷配置入口 */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsEditingQr(!isEditingQr);
-                          setTempQrUrl(customQrUrl);
-                        }}
-                        className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1.5 mt-1 font-bold bg-amber-500/5 hover:bg-amber-500/10 px-2.5 py-1.5 rounded-lg border border-amber-500/15 transition-all outline-none"
-                      >
-                        <Settings className="w-3.5 h-3.5 animate-spin duration-3000" />
-                        <span>⚙️ 替换收款通道 (服务配置)</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 收款二维码可替换配置表单面板 */}
-                  {isEditingQr && (
-                    <div className="bg-slate-950/65 border border-amber-500/20 rounded-2xl p-4.5 space-y-4 shadow-inner" id="payment-qr-customizer-panel">
-                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                        <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
-                          <Settings className="w-3.5 h-3.5" />
-                          自定义收款码配置中心
-                        </span>
-                        <button 
-                          type="button"
-                          onClick={() => setIsEditingQr(false)}
-                          className="text-[10px] text-slate-500 hover:text-slate-300 hover:bg-white/5 px-2 py-0.5 rounded-md transition-all"
-                        >
-                          收起
-                        </button>
-                      </div>
-
-                      <div className="space-y-3.5">
-                        {/* 途径 1: 粘贴图片网络链接 */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] text-slate-400 block font-bold">
-                            方法一：输入自定义收款商户码 URL 链接：
-                          </label>
-                          <input
-                            type="text"
-                            value={tempQrUrl}
-                            onChange={(e) => setTempQrUrl(e.target.value)}
-                            placeholder="如: https://my-site.com/wechat-pay.jpg"
-                            className="w-full bg-slate-900 border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono transition-all"
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
+                    {/* 左侧：付款二维码展示 */}
+                    <div className="flex flex-col items-center space-y-3 bg-slate-950/40 p-4 rounded-3xl border border-white/5">
+                      <div className="relative p-2.5 bg-white rounded-2xl border-2 border-amber-500/25">
+                        {customQrUrl ? (
+                          <img 
+                            src={customQrUrl} 
+                            className="w-36 h-36 object-contain rounded-xl mx-auto" 
+                            alt="收单二维码" 
+                            referrerPolicy="no-referrer"
+                            onError={() => {
+                              setUpgradeError('自定义收款图像加载异常，请联系系统管理员。');
+                            }}
                           />
-                        </div>
+                        ) : (
+                          /* Built-in high performance default SVG QR backup */
+                          <svg
+                            className="w-36 h-36 text-slate-900"
+                            viewBox="0 0 100 100"
+                            shapeRendering="crispEdges"
+                          >
+                            {/* Finder pattern corners */}
+                            <path d="M0 0h25v25H0zm3 3v19h19V3zm3 3h13v13H6z" fill="currentColor" />
+                            <path d="M75 0h25v25H75zm3 3v19h19V3zm3 3h13v13H81z" fill="currentColor" />
+                            <path d="M0 75h25v25H0zm3 18v19h19V78zm3 3h13v13H6z" fill="currentColor" />
+                            
+                            {/* Finder inner dots */}
+                            <rect x="9" y="9" width="7" height="7" fill="currentColor" />
+                            <rect x="84" y="9" width="7" height="7" fill="currentColor" />
+                            <rect x="9" y="84" width="7" height="7" fill="currentColor" />
 
-                        {/* 途径 2: 本地极速拖拽或多媒体选取 (转换为 base64) */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] text-slate-400 block font-bold">
-                            方法二：直接上传微信/支付宝收款码截图 (离线 Base64 编码保存)：
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <label className="flex-1 flex items-center justify-center gap-1.5 border border-dashed border-slate-700 hover:border-amber-500/40 rounded-xl py-2 px-3 bg-slate-900/40 hover:bg-slate-900 text-slate-300 hover:text-amber-400 cursor-pointer text-[10px] font-bold transition-all">
-                              <Upload className="w-3.5 h-3.5" />
-                              <span>选择本地收款码文件</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleLocalFileChange}
-                                className="hidden"
-                              />
-                            </label>
-                          </div>
-                        </div>
-
-                        {tempQrUrl && (
-                          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 flex items-center justify-between">
-                            <div className="truncate text-[9px] text-slate-400 font-mono pr-2">
-                              当前载入源: {tempQrUrl.startsWith('data:') ? '本地上传 Base64 二维码大文件' : tempQrUrl}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setTempQrUrl('')}
-                              className="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 shrink-0"
-                            >
-                              清除
-                            </button>
+                            <path d="M30 4h5v5h-5zm0 10h10v5H30zm15-10h15v5H45zm5 10h5v8h-5zm10-5h5v5h-5zm-35 25h10v5H20zm15 5h5v5h-5zm5-5h10v5H40zm15 0h5v8h-5zm10-5h15v5H65zm-25 15h12v5H40zm20 5h5v5h-5zm10-5h5v10H70zm-45 15h15v5H25zm20 0h5v5h-5zm10-10h10v5H55zm15 5h10v5H70z" fill="currentColor" />
+                            <path d="M30 60h5v10h-5zm10 5h12v5H40zm15-5h5v5h-5zm5 10h10v5H60zm15-10h15v5H75zm0 15h5v5h-5z" fill="currentColor" />
+                            
+                            {/* Golden central insignia */}
+                            <rect x="42" y="42" width="16" height="16" rx="4" fill="#f59e0b" />
+                            <path d="M47 52l1.5-3 1.5 3h-3zm4 0l1.5-3 1.5 3h-3z" fill="#0f172a" />
+                          </svg>
+                        )}
+                        
+                        {!customQrUrl && (
+                          <div className="absolute inset-0 m-auto w-7 h-7 rounded-full bg-slate-900 border border-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                            <Crown className="w-3.5 h-3.5 text-amber-400" />
                           </div>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2.5 pt-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCustomQrUrl('');
-                            setTempQrUrl('');
-                            localStorage.removeItem('custom_payment_qr');
-                            setIsEditingQr(false);
-                            setUpgradeError('');
-                          }}
-                          className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[10px] font-bold transition-all outline-none"
-                        >
-                          恢复系统默认
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setCustomQrUrl(tempQrUrl);
-                            if (tempQrUrl.trim()) {
-                              localStorage.setItem('custom_payment_qr', tempQrUrl.trim());
-                            } else {
-                              localStorage.removeItem('custom_payment_qr');
-                            }
-                            setIsEditingQr(false);
-                            setUpgradeError('');
-                          }}
-                          className="flex-1 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-[10px] font-black tracking-wider transition-all outline-none shadow-md shadow-amber-500/10"
-                        >
-                          保存配置
-                        </button>
+                      <div className="flex gap-3 text-slate-300 text-[10px]">
+                        <span className="flex items-center gap-1 font-bold">
+                          <Smartphone className="w-3 h-3 text-emerald-400" />
+                          微信扫码
+                        </span>
+                        <span className="text-slate-600">|</span>
+                        <span className="flex items-center gap-1 font-bold">
+                          <Smartphone className="w-3 h-3 text-sky-400" />
+                          支付宝扫码
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 右侧：交易核验认领申领表单 */}
+                    <form onSubmit={handleSubmitOrder} className="space-y-3 text-left">
+                      <span className="text-[11px] font-black text-amber-400 block tracking-wider uppercase">📝 完成支付后填写下表认领</span>
+                      
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-bold">您的微信/支付宝转账昵称 或 单号后4位 (必填)</label>
+                        <input
+                          type="text"
+                          required
+                          value={voucherName}
+                          onChange={(e) => setVoucherName(e.target.value)}
+                          placeholder="例如: 张三(微信) 或 后四位9821"
+                          className="w-full bg-slate-950/80 border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-all"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 block font-bold">附带支付成功截图（可选，极速秒审）</label>
+                        <label className="w-full flex items-center justify-center gap-1.5 border border-dashed border-slate-700/60 rounded-xl py-2 px-3 bg-slate-950/40 hover:bg-slate-950 text-slate-400 hover:text-amber-400 cursor-pointer text-[10px] font-bold transition-all">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>{voucherScreenshot ? '已装载付款截图一张' : '点击上传转账回单截图'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleVoucherScreenshotChange}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
+                      {upgradeError && (
+                        <div className="text-[10px] text-red-400 bg-red-500/5 border border-red-500/10 p-2 rounded-lg font-medium">
+                          {upgradeError}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={isUpgrading}
+                        className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 mt-1"
+                      >
+                        {isUpgrading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        {isUpgrading ? '正在提交凭证至主站云端...' : '我已扫码并提交核查'}
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* 引导扫码友情备注 */}
+                  <div className="bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-[10px] text-slate-400 space-y-1 text-center md:text-left">
+                    <div className="flex items-center gap-1.5 text-amber-400 justify-center md:justify-start font-black">
+                      <Heart className="w-3 h-3 text-rose-500 fill-rose-500 animate-[pulse_1s_infinite]" />
+                      <span>资金隔离与确收承诺</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      云端账册独立审计运行。您填入的转账核对单将直接写入 D1 数据库锁存，您的邮箱 <span className="text-amber-300 font-mono underline">{user?.email}</span> 会永久打上特权标记，在管理员核对微信/支付宝后自动极速解锁过账（支持人工 1v1 客服通道支持拦截升级！）。
+                    </p>
+                  </div>
+
+                  {/* 普通用户自己提交的登记历史审核进度查看 */}
+                  {orders.length > 0 && (
+                    <div className="bg-slate-950/30 border border-white/5 rounded-2xl p-3 space-y-2">
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-widest">您的申领账单核查状态历史 (D1 Records)：</span>
+                      <div className="space-y-1.5 text-[10px] max-h-24 overflow-y-auto pr-1">
+                        {orders.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between py-1 border-b border-white/5 font-mono">
+                            <span className="text-slate-400">单号: {item.id}</span>
+                            <span className="text-slate-300">凭证: {item.voucher_name}</span>
+                            <span className={`px-1 rounded-sm text-[8px] font-bold ${
+                              item.status === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
+                              item.status === 'rejected' ? 'bg-slate-800 text-slate-500' : 'bg-amber-500/10 text-amber-400'
+                            }`}>
+                              {item.status === 'success' ? 'SUCCESS 确收Pro' : item.status === 'rejected' ? 'REJECTED 驳回' : 'PENDING 审核中'}
+                            </span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
 
-                  {/* 引导扫码友情备注 */}
-                  <div className="bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-[10px] text-slate-400 space-y-1 text-center md:text-left">
-                    <div className="flex items-center gap-1.5 text-amber-400 justify-center md:justify-start">
-                      <Heart className="w-3 h-3 text-rose-500 fill-rose-500 animate-[pulse_1s_infinite]" />
-                      <span>温馨提示</span>
-                    </div>
-                    <p className="leading-relaxed">
-                      请使用手机扫描双渠道收单二维码。在进行登记或支付后，云服务器将锁定由于 [ {user?.email || '当前账号'} ] 产生的数据，极速通过审核并开放双端数据下载权限。如金额为 0
-                      元，可直接点击下方 <span className="text-amber-300 font-bold">我已扫码并提请开通</span> 按钮直达审批网络。
-                    </p>
-                  </div>
-
-                  {/* 错误信息展示 */}
-                  {upgradeError && (
-                    <div className="bg-red-500/10 border border-red-500/25 rounded-2xl p-3 text-[11px] text-red-400 font-medium">
-                      {upgradeError}
-                    </div>
-                  )}
-
-                  {/* 扫码支付后按钮 */}
-                  <div className="pt-2">
-                    <button
-                      onClick={handleSimulatedPay}
-                      disabled={isUpgrading}
-                      className={`w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs shadow-lg shadow-amber-900/30 tracking-wider transition-all transform hover:scale-[1.01] flex items-center justify-center gap-2 ${
-                        isUpgrading ? 'opacity-70 cursor-not-allowed' : ''
-                      }`}
-                    >
-                      {isUpgrading && <Loader2 className="w-4 h-4 animate-spin" />}
-                      {isUpgrading ? '正在联系边缘网络云端授权...' : '我已扫码，立即激活高级服务'}
-                    </button>
-                  </div>
                 </div>
               )}
             </motion.div>
           )}
         </motion.div>
       </div>
+
+      {/* 🚀 Sleek Centered Confirmation Modal Overlay (Iframe-safe replacement for window.confirm) */}
+      <AnimatePresence>
+        {activeConfirmAction && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[10000] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 font-sans text-slate-200"
+            style={{ pointerEvents: 'auto' }}
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              className="max-w-md w-full bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-850/60 space-y-5"
+            >
+              <div className="flex items-center gap-3 border-b border-slate-800 pb-3">
+                <div className={`p-2.5 rounded-2xl ${
+                  activeConfirmAction.status === 'success' 
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                }`}>
+                  {activeConfirmAction.status === 'success' ? (
+                    <Check className="w-5 h-5 shrink-0" />
+                  ) : (
+                    <X className="w-5 h-5 shrink-0" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-100">
+                    {activeConfirmAction.status === 'success' ? '确认支付并开启 PRO 商业赋权' : '驳回/作废申请单'}
+                  </h3>
+                  <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">FINANCIAL VERIFICATION CONSOLE</p>
+                </div>
+              </div>
+
+              {/* Order Info Summary Details */}
+              <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-800 space-y-2 text-xs font-mono">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">申请人邮箱:</span>
+                  <span className="font-bold text-slate-200">{activeConfirmAction.order.email}</span>
+                </div>
+                <div className="flex justify-between flex-wrap">
+                  <span className="text-slate-400">单编号:</span>
+                  <span className="text-slate-400 text-[10px] break-all">{activeConfirmAction.order.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">核对凭证姓名:</span>
+                  <span className="font-bold text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded text-[10px]">{activeConfirmAction.order.voucher_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">拟定充值金额:</span>
+                  <span className="font-bold text-emerald-400">￥{activeConfirmAction.order.amount ? Number(activeConfirmAction.order.amount).toFixed(2) : '399.00'}</span>
+                </div>
+              </div>
+
+              {activeConfirmAction.order.voucher_screenshot && (
+                <div className="bg-slate-950/30 rounded-2xl p-2 border border-slate-800 text-center">
+                  <p className="text-[10px] text-slate-400 font-bold mb-1">转账单据截图</p>
+                  <img
+                    src={activeConfirmAction.order.voucher_screenshot}
+                    alt="Receipt preview"
+                    className="max-h-24 rounded-lg mx-auto object-contain shadow-sm"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+              )}
+
+              <p className="text-xs text-slate-400 leading-relaxed font-semibold">
+                {activeConfirmAction.status === 'success' 
+                  ? '💡 请确认您已收到对应的微信、支付宝、网银等线下款项。确认后，系统会直接在 D1 数据库中对此账单进行过账，同时在 1 秒内为该用户邮箱升级为 PRO 会员特权、到期日自动顺延 1 年。'
+                  : '⚠️ 确认驳回该申请？驳回后该申请将被标记为过期/异常驳回，对普通端用户公开，不会赋予特殊算力。'}
+              </p>
+
+              <div className="flex gap-2.5 pt-1">
+                <button
+                  type="button"
+                  disabled={isActionLoading}
+                  onClick={() => setActiveConfirmAction(null)}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-slate-300 text-xs font-bold rounded-xl transition-all border border-slate-700/60 select-none cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  disabled={isActionLoading}
+                  onClick={async () => {
+                    await handleApproveOrderExecute(activeConfirmAction.order.id, activeConfirmAction.status);
+                  }}
+                  className={`flex-1 py-2.5 text-white text-xs font-black rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 select-none cursor-pointer ${
+                    activeConfirmAction.status === 'success'
+                      ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-900/20'
+                      : 'bg-rose-600 hover:bg-rose-500 shadow-rose-900/20'
+                  }`}
+                >
+                  {isActionLoading ? '正在提报过账...' : (activeConfirmAction.status === 'success' ? '确认支付并授权' : '确认作废此单')}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </AnimatePresence>
   );
 };
