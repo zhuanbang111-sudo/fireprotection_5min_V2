@@ -99,7 +99,8 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
   };
 
   // 1. 系统配置数据绑定的收款码
-  const [adminQrUrl, setAdminQrUrl] = useState('');
+  const [adminQrUrl, setAdminQrUrl] = useState(''); // 微信收款码
+  const [adminAlipayQrUrl, setAdminAlipayQrUrl] = useState(''); // 支付宝收款码
   const [isConfigSaving, setIsConfigSaving] = useState(false);
 
   // 1.5. 系统配置数据绑定的价格
@@ -155,13 +156,14 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
       const res = await axios.get('/api/system/qr');
       if (res.data.success) {
         setAdminQrUrl(res.data.qrUrl || '');
+        setAdminAlipayQrUrl(res.data.alipayQrUrl || '');
       }
     } catch (e) {
       console.error('[Admin] 获取服务端收款配置出错:', e);
     }
   };
 
-  // 处理管理员本地替换上传 (Base64)
+  // 处理管理员微信收款码替换上传 (Base64)
   const handleAdminLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -171,11 +173,30 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
       const base64 = event.target?.result as string;
       if (base64) {
         setAdminQrUrl(base64);
-        showToast('图片读取成功！请点击下方的“保存并上线”按钮，将收款码实时在线部署发布！', 'info');
+        showToast('微信收款二维码读取成功！请点击下方的“保存配置并部署上线”按钮，将收款码实时在线部署发布！', 'info');
       }
     };
     reader.onerror = () => {
-      showToast('读取图片文件失败，请尝试其他格式。', 'error');
+      showToast('读取微信图片文件失败，请尝试其他格式。', 'error');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 处理管理员支付宝收款码替换上传 (Base64)
+  const handleAdminAlipayLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        setAdminAlipayQrUrl(base64);
+        showToast('支付宝收款二维码读取成功！请点击下方的“保存配置并部署上线”按钮，将收款码实时在线部署发布！', 'info');
+      }
+    };
+    reader.onerror = () => {
+      showToast('读取支付宝图片文件失败，请尝试其他格式。', 'error');
     };
     reader.readAsDataURL(file);
   };
@@ -188,13 +209,14 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
     setIsConfigSaving(true);
     try {
       const res = await axios.post('/api/system/qr', {
-        qrUrl: adminQrUrl
+        qrUrl: adminQrUrl,
+        alipayQrUrl: adminAlipayQrUrl
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
       if (res.data.success) {
-        showToast('🎉 全局云端收款码热部署上线！前台全体普通访客现在将直接显示此新收款信息。', 'success');
+        showToast('🎉 全局云端双重收款码（微信与支付宝）热部署上线！前台全体普通访客现在将直接显示这组最新收款信息。', 'success');
       } else {
         throw new Error(res.data.message || '保存配置失败');
       }

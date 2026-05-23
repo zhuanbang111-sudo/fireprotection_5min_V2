@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS feedbacks (
 -- 3. 创建系统全局配置表
 CREATE TABLE IF NOT EXISTS system_configs (
   key TEXT PRIMARY KEY,
-  value TEXT
+  value TEXT,
+  price TEXT -- 支持全局动态定价字段同步
 );
 
 -- 4. 创建订单管理与账单表

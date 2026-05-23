@@ -362,15 +362,17 @@ apiApp.get('/system/qr', async (c) => {
   try {
     const DB = c.env.DB;
     if (!DB) {
-      return c.json({ success: false, qrUrl: '' });
+      return c.json({ success: false, qrUrl: '', alipayQrUrl: '' });
     }
-    const qrConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    const wxConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    const alipayConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_alipay').first();
     return c.json({
       success: true,
-      qrUrl: qrConfig?.value || ''
+      qrUrl: wxConfig?.value || '',
+      alipayQrUrl: alipayConfig?.value || ''
     });
   } catch (e: any) {
-    return c.json({ success: false, qrUrl: '' });
+    return c.json({ success: false, qrUrl: '', alipayQrUrl: '' });
   }
 });
 
@@ -400,15 +402,22 @@ apiApp.post('/system/qr', async (c) => {
     }
 
     const body = await c.req.json();
-    const { qrUrl } = body;
+    const { qrUrl, alipayQrUrl } = body;
     
-    // 使用 SQLite REPLACE INTO 实现简洁安全的覆盖性更新
+    // 保存微信二维码至 D1
     await DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
       .bind('payment_qr_code_url', qrUrl || '')
       .run();
 
+    // 保存支付宝二维码至 D1
+    if (alipayQrUrl !== undefined) {
+      await DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
+        .bind('payment_qr_code_alipay', alipayQrUrl || '')
+        .run();
+    }
+
     console.log(`[Admin Control Worker] 收款信息已被管理员 ${user.email} 升级为自定义源`);
-    return c.json({ success: true, message: '收款码更新成功', qrUrl });
+    return c.json({ success: true, message: '收款码更新成功', qrUrl, alipayQrUrl });
   } catch (e: any) {
     return c.json({ success: false, message: e.message || '系统错误' }, 500);
   }
@@ -421,8 +430,30 @@ apiApp.get('/system/price', async (c) => {
     if (!DB) {
       return c.json({ success: true, price: 399.00 });
     }
-    const priceConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('pro_membership_price').first();
-    const price = priceConfig?.value ? parseFloat(priceConfig.value) : 399.00;
+    
+    let price = 399.00;
+    const configs = await DB.prepare("SELECT * FROM system_configs").all();
+    const rows = configs.results || configs || [];
+
+    // 1. 优先度 A：任何一行带有自定义 `price` 属性列的数据 (支持直接通过 D1 面板修改单个单元格生效)
+    for (const r of rows as any[]) {
+      if (r.price !== undefined && r.price !== null && r.price !== '') {
+        const p = parseFloat(r.price);
+        if (!isNaN(p) && p >= 0) {
+          price = p;
+        }
+      }
+    }
+
+    // 2. 优先度 B：系统定价专用行配置
+    const proPriceRow = (rows as any[]).find((r: any) => r.key === 'pro_membership_price');
+    if (proPriceRow && proPriceRow.value) {
+      const p = parseFloat(proPriceRow.value);
+      if (!isNaN(p) && p >= 0) {
+        price = p;
+      }
+    }
+
     return c.json({
       success: true,
       price: isNaN(price) ? 399.00 : price
@@ -464,9 +495,19 @@ apiApp.post('/system/price', async (c) => {
       return c.json({ success: false, message: '非法价格数值' }, 400);
     }
     
+    // 1. 保存会员定价专门键值对
     await DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
       .bind('pro_membership_price', priceNum.toString())
       .run();
+
+    // 2. 将此价格一并覆写更新至全局 price 字段上 (支持任何包含 price 字段的列)
+    try {
+      await DB.prepare("UPDATE system_configs SET price = ?")
+        .bind(priceNum.toString())
+        .run();
+    } catch(e) {
+      console.log("[Sync Warning Worker] system_configs table does not contain inline price column, ignoring.");
+    }
 
     console.log(`[Admin Control Worker] PRO 会员价格已被管理员 ${user.email} 升级为 ${priceNum}`);
     return c.json({ success: true, message: '会员价格更新成功', price: priceNum });

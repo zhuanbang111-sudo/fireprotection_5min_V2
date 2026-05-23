@@ -202,6 +202,12 @@ class D1PreparedStatement {
         const bindKey = this.params[0] || '';
         return configs.filter((c: any) => c.key === bindKey);
       }
+      if (sqlUpper.includes('UPDATE') && sqlUpper.includes('SET PRICE =')) {
+        const pNum = this.params[0]?.toString() || '';
+        const updated = configs.map((c: any) => ({ ...c, price: pNum }));
+        await saveTable('system_configs', updated);
+        return updated;
+      }
       if (sqlUpper.includes('INSERT') || sqlUpper.includes('UPDATE') || sqlUpper.includes('REPLACE')) {
         const [key, value] = this.params;
         const index = configs.findIndex((c: any) => c.key === key);
@@ -551,13 +557,15 @@ apiRouter.post('/auth/upgrade', async (req, res) => {
 // 1. 获取全局唯一的系统收款码 (任何用户均可访问，支持热加载)
 apiRouter.get('/system/qr', async (req, res) => {
   try {
-    const qrConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    const wxConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    const alipayConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_alipay').first();
     res.json({
       success: true,
-      qrUrl: qrConfig?.value || process.env.VITE_PAYMENT_QR_CODE_URL || ''
+      qrUrl: wxConfig?.value || process.env.VITE_PAYMENT_QR_CODE_URL || '',
+      alipayQrUrl: alipayConfig?.value || process.env.VITE_PAYMENT_QR_ALIPAY_URL || ''
     });
   } catch (e: any) {
-    res.json({ success: false, qrUrl: '' });
+    res.json({ success: false, qrUrl: '', alipayQrUrl: '' });
   }
 });
 
@@ -582,13 +590,22 @@ apiRouter.post('/system/qr', async (req, res) => {
       return res.status(403).json({ success: false, message: '无管理员操作权限' });
     }
 
-    const { qrUrl } = req.body;
+    const { qrUrl, alipayQrUrl } = req.body;
+    
+    // 保存微信收款码
     await env.DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
       .bind('payment_qr_code_url', qrUrl || '')
       .run();
 
+    // 保存支付宝收款码 (可选/存在时更新)
+    if (alipayQrUrl !== undefined) {
+      await env.DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
+        .bind('payment_qr_code_alipay', alipayQrUrl || '')
+        .run();
+    }
+
     console.log(`[Admin Control] 收款信息已被管理员 ${user.email} 升级为自定义源`);
-    res.json({ success: true, message: '收款码更新成功', qrUrl });
+    res.json({ success: true, message: '收款码更新成功', qrUrl, alipayQrUrl });
   } catch (e: any) {
     res.status(500).json({ success: false, message: e.message || '系统错误' });
   }
@@ -597,8 +614,29 @@ apiRouter.post('/system/qr', async (req, res) => {
 // 2.3 获取系统会员定价
 apiRouter.get('/system/price', async (req, res) => {
   try {
-    const priceConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('pro_membership_price').first();
-    const price = priceConfig?.value ? parseFloat(priceConfig.value) : 399.00;
+    let price = 399.00;
+    const configs: any = await env.DB.prepare("SELECT * FROM system_configs").all();
+    const rows: any[] = configs.results || configs || [];
+
+    // 1. 优先读取系统表中任何一个自定义的 `price` 列值 (支持用户直接在 Cloudflare D1 数据库面板直接修改 price 单元格生效)
+    for (const r of rows) {
+      if (r.price !== undefined && r.price !== null && r.price !== '') {
+        const p = parseFloat(r.price);
+        if (!isNaN(p) && p >= 0) {
+          price = p;
+        }
+      }
+    }
+
+    // 2. 接着读取 key = 'pro_membership_price' 行的实际内容
+    const proPriceRow = rows.find((r: any) => r.key === 'pro_membership_price');
+    if (proPriceRow && proPriceRow.value) {
+      const p = parseFloat(proPriceRow.value);
+      if (!isNaN(p) && p >= 0) {
+        price = p;
+      }
+    }
+
     res.json({
       success: true,
       price: isNaN(price) ? 399.00 : price
@@ -635,9 +673,19 @@ apiRouter.post('/system/price', async (req, res) => {
       return res.status(400).json({ success: false, message: '非法价格数值' });
     }
 
+    // 1. 将价格保存到独立的 key-value 中
     await env.DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
       .bind('pro_membership_price', priceNum.toString())
       .run();
+
+    // 2. 智能同步：如用户的 D1 数据库表中配置了额外的 `price` 属性列，我们也一并更新(实现全面热敏的数据双向联动)
+    try {
+      await env.DB.prepare("UPDATE system_configs SET price = ?")
+        .bind(priceNum.toString())
+        .run();
+    } catch (e) {
+      console.log("[Sync Warning] 表中没有 price 属性列，忽略行内同步价格列。");
+    }
 
     console.log(`[Admin Control] PRO 会员价格已被管理员 ${user.email} 升级为 ${priceNum}`);
     res.json({ success: true, message: '会员价格更新成功', price: priceNum });
