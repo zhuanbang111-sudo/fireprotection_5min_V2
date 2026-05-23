@@ -772,55 +772,55 @@ export const VipModal: React.FC<VipModalProps> = ({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
                     {/* 左侧：双重付款二维码展示 */}
-                    <div className="flex flex-col items-center justify-center space-y-4 bg-slate-950/40 p-4 shrink-0 rounded-3xl border border-white/5">
-                      <div className="flex gap-4 w-full justify-center">
+                    <div className="flex flex-col items-center justify-center space-y-4 bg-slate-950/40 p-4 shrink-0 rounded-3xl border border-white/5 w-full overflow-hidden">
+                      <div className="flex flex-row justify-evenly items-center w-full overflow-x-auto pb-2 custom-scrollbar gap-4">
                         {/* 微信二维码 */}
-                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[260px]">
-                          <div className="relative p-2 bg-white rounded-2xl border-2 border-emerald-500/25 w-full aspect-square">
+                        <div className="flex flex-col items-center space-y-2 min-w-[200px] max-w-[45%] shrink-0">
+                          <div className="relative p-3 bg-white border-4 border-[#f59e0b] w-full aspect-square shadow-lg flex items-center justify-center">
                             {customQrUrl ? (
                               <img 
                                 src={customQrUrl} 
-                                className="w-full h-full object-contain rounded-xl" 
+                                className="w-full h-full object-contain payment-qr-code" 
                                 alt="微信收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-slate-100 rounded-xl">
-                                <QrCode className="w-12 h-12 text-slate-400" />
+                              <div className="w-full h-full flex items-center justify-center bg-slate-100">
+                                <QrCode className="w-16 h-16 text-slate-400" />
                               </div>
                             )}
                           </div>
-                          <span className="flex items-center gap-1 font-bold text-[10px] text-emerald-400">
-                            <Smartphone className="w-3 h-3 text-emerald-400" />
+                          <span className="flex items-center gap-1 font-bold text-xs text-emerald-400">
+                            <Smartphone className="w-4 h-4 text-emerald-400" />
                             微信扫码
                           </span>
                         </div>
 
                         {/* 支付宝二维码 */}
-                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[260px]">
-                          <div className="relative p-2 bg-white rounded-2xl border-2 border-sky-500/25 w-full aspect-square">
+                        <div className="flex flex-col items-center space-y-2 min-w-[200px] max-w-[45%] shrink-0">
+                          <div className="relative p-3 bg-white border-4 border-[#f59e0b] w-full aspect-square shadow-lg flex items-center justify-center">
                             {customAlipayQrUrl ? (
                               <img 
                                 src={customAlipayQrUrl} 
-                                className="w-full h-full object-contain rounded-xl" 
+                                className="w-full h-full object-contain payment-qr-code" 
                                 alt="支付宝收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-slate-100 rounded-xl">
-                                <QrCode className="w-12 h-12 text-slate-400" />
+                              <div className="w-full h-full flex items-center justify-center bg-slate-100">
+                                <QrCode className="w-16 h-16 text-slate-400" />
                               </div>
                             )}
                           </div>
-                          <span className="flex items-center gap-1 font-bold text-[10px] text-sky-400">
-                            <Smartphone className="w-3 h-3 text-sky-400" />
+                          <span className="flex items-center gap-1 font-bold text-xs text-sky-400">
+                            <Smartphone className="w-4 h-4 text-sky-400" />
                             支付宝扫码
                           </span>
                         </div>
                       </div>
                       
                       <div className="text-[10px] text-slate-500 text-center font-bold">
-                        支持任意方式扫码支付
+                        手机可左右滑动查看二维码，支持任意方式付款
                       </div>
                     </div>
 
