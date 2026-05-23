@@ -8,9 +8,9 @@ import {
 import axios from 'axios';
 
 // ==========================================
-// PRO 商业版定价配置（可在代码中随时修改）
+// PRO 商业版定价配置（已支持后台动态调整与更新）
 // ==========================================
-const PRO_PRICE = 399.00; // 默认 399.00 元，支持随时更改，例如 299.00 / 0.00
+const DEFAULT_FALLBACK_PRICE = 399.00;
 
 interface VipModalProps {
   isOpen: boolean;
@@ -37,6 +37,11 @@ export const VipModal: React.FC<VipModalProps> = ({
 
   // 1. 系统配置数据绑定的收款码
   const [customQrUrl, setCustomQrUrl] = useState('');
+  
+  // 1.5. 系统配置数据绑定的价格
+  const [price, setPrice] = useState<number>(399.00);
+  const [adminPriceInput, setAdminPriceInput] = useState<string>('399.00');
+  const [isPriceSaving, setIsPriceSaving] = useState(false);
   
   // 2. 交易凭证与申领登记表
   const [voucherName, setVoucherName] = useState('');
@@ -95,11 +100,58 @@ export const VipModal: React.FC<VipModalProps> = ({
     }
   };
 
+  // 获取服务端的账单价格
+  const fetchSystemPrice = async () => {
+    try {
+      const res = await axios.get('/api/system/price');
+      if (res.data.success && typeof res.data.price === 'number') {
+        setPrice(res.data.price);
+        setAdminPriceInput(res.data.price.toString());
+      }
+    } catch (e) {
+      console.error('[VipModal] 获取服务端价格配置出错:', e);
+    }
+  };
+
+  // 超级管理员保存会员价格
+  const handleSaveSystemPrice = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+
+    const parsedPrice = parseFloat(adminPriceInput);
+    if (parsedPrice < 0 || isNaN(parsedPrice)) {
+      showToast('请输入有效的会员价格！', 'error');
+      return;
+    }
+
+    setIsPriceSaving(true);
+    try {
+      const res = await axios.post('/api/system/price', {
+        price: parsedPrice
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.success) {
+        setPrice(parsedPrice);
+        showToast(`🎉 全局 PRO 会员价格已更新为 ￥${parsedPrice.toFixed(2)} 元！`, 'success');
+      } else {
+        throw new Error(res.data.message || '保存价格失败');
+      }
+    } catch (e: any) {
+      console.error('[Save Price Error]', e);
+      showToast(e.response?.data?.message || '价格配置更新失败', 'error');
+    } finally {
+      setIsPriceSaving(false);
+    }
+  };
+
   // 挂载加载
   useEffect(() => {
     if (isOpen) {
       fetchSystemQr();
       fetchOrders();
+      fetchSystemPrice();
       // 默认流式复位
       setShowPayment(false);
       setPaySuccess(false);
@@ -167,7 +219,7 @@ export const VipModal: React.FC<VipModalProps> = ({
     try {
       const res = await axios.post('/api/orders', {
         paymentMethod: '微信/支付宝扫码',
-        amount: PRO_PRICE,
+        amount: price,
         voucherName: voucherName.trim(),
         voucherScreenshot: voucherScreenshot
       }, {
@@ -411,6 +463,41 @@ export const VipModal: React.FC<VipModalProps> = ({
                 </div>
               </div>
 
+              {/* Token price setup config */}
+              <div className="bg-slate-950/60 rounded-2xl p-4 border border-rose-500/10 space-y-4 shadow-inner">
+                <span className="text-xs font-bold text-rose-400 flex items-center gap-1.5">
+                  🏷️ PRO 会员定价调整 (D1 映射)
+                </span>
+                
+                <div className="space-y-3 text-xs">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-slate-400 block font-bold">设置授权标价费用 (元)</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500">￥</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={adminPriceInput}
+                          onChange={(e) => setAdminPriceInput(e.target.value)}
+                          placeholder="如: 399.00"
+                          className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-3 py-2 text-slate-100 placeholder-slate-600 focus:outline-none focus:border-rose-500 font-mono text-[11px]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveSystemPrice}
+                        disabled={isPriceSaving}
+                        className="px-4 py-2 bg-rose-500 hover:bg-rose-600 active:bg-rose-700 text-white rounded-xl text-xs font-black tracking-wider shadow-lg shadow-rose-950/40 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {isPriceSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '更新价格'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* 2. 待审/已批订单账目审计表 */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -433,8 +520,8 @@ export const VipModal: React.FC<VipModalProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-                    {orders.map((item) => (
-                      <div key={item.id} className="bg-slate-950/70 border border-slate-800/60 rounded-xl p-3.5 space-y-3 text-xs leading-normal">
+                    {orders.map((item, idx) => (
+                      <div key={`${item.id}-${idx}`} className="bg-slate-950/70 border border-slate-800/60 rounded-xl p-3.5 space-y-3 text-xs leading-normal">
                         <div className="flex items-start justify-between">
                           <div>
                             <p className="font-bold text-slate-100 font-mono text-[11px]">单号: {item.id}</p>
@@ -654,7 +741,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 text-center relative overflow-hidden">
                     <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版终身授权费用</p>
                     <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 font-sans tracking-tight">
-                      ￥{PRO_PRICE.toFixed(2)} 元
+                      ￥{price.toFixed(2)} 元
                     </div>
                   </div>
 
@@ -781,8 +868,8 @@ export const VipModal: React.FC<VipModalProps> = ({
                     <div className="bg-slate-950/30 border border-white/5 rounded-2xl p-3 space-y-2">
                       <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-widest">您的申领账单核查状态历史 (D1 Records)：</span>
                       <div className="space-y-1.5 text-[10px] max-h-24 overflow-y-auto pr-1">
-                        {orders.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between py-1 border-b border-white/5 font-mono">
+                        {orders.map((item, idx) => (
+                          <div key={`${item.id}-${idx}`} className="flex items-center justify-between py-1 border-b border-white/5 font-mono">
                             <span className="text-slate-400">单号: {item.id}</span>
                             <span className="text-slate-300">凭证: {item.voucher_name}</span>
                             <span className={`px-1 rounded-sm text-[8px] font-bold ${

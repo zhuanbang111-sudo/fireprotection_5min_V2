@@ -21,7 +21,8 @@ import {
   Ban,
   Database,
   QrCode,
-  Upload
+  Upload,
+  Loader2
 } from 'lucide-react';
 
 interface Order {
@@ -101,6 +102,53 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
   const [adminQrUrl, setAdminQrUrl] = useState('');
   const [isConfigSaving, setIsConfigSaving] = useState(false);
 
+  // 1.5. 系统配置数据绑定的价格
+  const [adminPrice, setAdminPrice] = useState<number>(399.00);
+  const [isPriceSaving, setIsPriceSaving] = useState(false);
+
+  // 获取服务端的账单价格
+  const fetchSystemPrice = async () => {
+    try {
+      const res = await axios.get('/api/system/price');
+      if (res.data.success && typeof res.data.price === 'number') {
+        setAdminPrice(res.data.price);
+      }
+    } catch (e) {
+      console.error('[Admin] 获取服务端价格配置出错:', e);
+    }
+  };
+
+  // 超级管理员保存会员价格
+  const handleSaveSystemPrice = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+
+    if (adminPrice < 0 || isNaN(adminPrice)) {
+      showToast('请输入有效的会员价格！', 'error');
+      return;
+    }
+
+    setIsPriceSaving(true);
+    try {
+      const res = await axios.post('/api/system/price', {
+        price: adminPrice
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.success) {
+        showToast(`🎉 全局 PRO 会员价格已更新为 ￥${adminPrice.toFixed(2)} 元！全体前台页面以及收银台将立即同步热部署更新！`, 'success');
+      } else {
+        throw new Error(res.data.message || '保存价格失败');
+      }
+    } catch (e: any) {
+      console.error('[Save Price Error]', e);
+      showToast(e.response?.data?.message || '价格配置更新失败', 'error');
+    } finally {
+      setIsPriceSaving(false);
+    }
+  };
+
   // 获取服务端的全局收款码配置 (热更新)
   const fetchSystemQr = async () => {
     try {
@@ -161,6 +209,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
   useEffect(() => {
     fetchOrders();
     fetchSystemQr();
+    fetchSystemPrice();
   }, []);
 
   // Filter orders based on filter selection and search bar (fuzzy search email, order id, memo)
@@ -516,6 +565,83 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
           </div>
         </div>
 
+        {/* 🏷️ PRO 会员定价调整中心 */}
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-6">
+          <div className="flex items-center gap-3 border-b border-slate-100 pb-4 mb-5">
+            <div className="p-2.5 bg-amber-500/10 text-amber-600 rounded-2xl border border-amber-500/10">
+              <CreditCard className="w-5 h-5 shrink-0" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900">
+                PRO 会员定价调整中心 (动态定价中心)
+              </h3>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider font-mono">
+                GLOBAL SYSTEM PRICING MANAGER & DYNAMIC SETTINGS
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+            {/* Input & Info description */}
+            <div className="md:col-span-8 space-y-4">
+              <div className="p-3.5 bg-amber-500/[0.03] border border-amber-500/15 rounded-2xl">
+                <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
+                  <span className="font-sans font-bold text-amber-600">💡 动态价格逻辑：</span>
+                  管理员在此处设置的 PRO 会员授权价格（人民币，元）将被即时写入云端 D1 数据库。前台用户在点击「升级账户」拉起账单以及提交财务确认申请订单时，均会自动实时匹配此处设置的最新的金额标准！
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">￥</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={adminPrice}
+                    onChange={(e) => setAdminPrice(parseFloat(e.target.value) || 0)}
+                    placeholder="请输入授权金额（例如 399.00）"
+                    className="w-full h-10 bg-slate-50 hover:bg-slate-100/50 border border-slate-250 rounded-xl pl-8 pr-12 text-xs font-black focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-900"
+                  />
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold text-slate-450">元</span>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isPriceSaving}
+                  onClick={handleSaveSystemPrice}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-500/60 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-amber-900/10 flex items-center justify-center gap-1.5 select-none cursor-pointer"
+                >
+                  {isPriceSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>正在更新...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>更新会员价格</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Current Pricing Showcase Box */}
+            <div className="md:col-span-4 p-4 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center min-h-[140px]">
+              <span className="text-[9px] text-slate-405 font-black uppercase tracking-wider font-mono mb-2">
+                当前云端实时结算标价
+              </span>
+              <div className="text-3xl font-black text-slate-800 tracking-tight font-sans">
+                ￥{adminPrice.toFixed(2)}
+              </div>
+              <span className="text-[9px] text-emerald-600 font-black bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full mt-2 uppercase tracking-wide">
+                ● 实时生效中
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* 📋 Central Datagrid Filter Panel */}
         <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
           
@@ -616,12 +742,12 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredOrders.map((order) => {
+                  {filteredOrders.map((order, idx) => {
                     const isPending = order.status === 'pending';
                     
                     return (
                       <tr 
-                        key={order.id} 
+                        key={`${order.id}-${idx}`} 
                         className={`hover:bg-slate-50/70 transition-colors ${
                           isPending ? 'bg-amber-500/[0.01]' : ''
                         }`}

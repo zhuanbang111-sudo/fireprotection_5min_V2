@@ -414,6 +414,67 @@ apiApp.post('/system/qr', async (c) => {
   }
 });
 
+// 1.5. 获取全局系统配置的价格
+apiApp.get('/system/price', async (c) => {
+  try {
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: true, price: 399.00 });
+    }
+    const priceConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('pro_membership_price').first();
+    const price = priceConfig?.value ? parseFloat(priceConfig.value) : 399.00;
+    return c.json({
+      success: true,
+      price: isNaN(price) ? 399.00 : price
+    });
+  } catch (e: any) {
+    return c.json({ success: true, price: 399.00 });
+  }
+});
+
+// 2.5. 超级管理员安全配置价格
+apiApp.post('/system/price', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
+    if (!isAdmin) {
+      return c.json({ success: false, message: '无管理员操作权限' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { price } = body;
+    const priceNum = parseFloat(price);
+    if (isNaN(priceNum) || priceNum < 0) {
+      return c.json({ success: false, message: '非法价格数值' }, 400);
+    }
+    
+    await DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
+      .bind('pro_membership_price', priceNum.toString())
+      .run();
+
+    console.log(`[Admin Control Worker] PRO 会员价格已被管理员 ${user.email} 升级为 ${priceNum}`);
+    return c.json({ success: true, message: '会员价格更新成功', price: priceNum });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '系统错误' }, 500);
+  }
+});
+
 // 3. 用户提交转账核验申请订单
 apiApp.post('/orders', async (c) => {
   try {
