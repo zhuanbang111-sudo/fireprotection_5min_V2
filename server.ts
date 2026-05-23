@@ -594,6 +594,58 @@ apiRouter.post('/system/qr', async (req, res) => {
   }
 });
 
+// 2.3 获取系统会员定价
+apiRouter.get('/system/price', async (req, res) => {
+  try {
+    const priceConfig = await env.DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('pro_membership_price').first();
+    const price = priceConfig?.value ? parseFloat(priceConfig.value) : 399.00;
+    res.json({
+      success: true,
+      price: isNaN(price) ? 399.00 : price
+    });
+  } catch (e: any) {
+    res.json({ success: true, price: 399.00 });
+  }
+});
+
+// 2.4 超级管理员配置价格
+apiRouter.post('/system/price', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
+    if (!isAdmin) {
+      return res.status(403).json({ success: false, message: '无管理员操作权限' });
+    }
+
+    const { price } = req.body;
+    const priceNum = parseFloat(price);
+    if (isNaN(priceNum) || priceNum < 0) {
+      return res.status(400).json({ success: false, message: '非法价格数值' });
+    }
+
+    await env.DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
+      .bind('pro_membership_price', priceNum.toString())
+      .run();
+
+    console.log(`[Admin Control] PRO 会员价格已被管理员 ${user.email} 升级为 ${priceNum}`);
+    res.json({ success: true, message: '会员价格更新成功', price: priceNum });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || '系统错误' });
+  }
+});
+
 // 3. 用户提交转账核验申请订单
 apiRouter.post('/orders', async (req, res) => {
   try {
