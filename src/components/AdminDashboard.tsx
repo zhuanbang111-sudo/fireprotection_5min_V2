@@ -477,27 +477,48 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
               <span className="text-[10px] text-slate-405 font-bold mb-3 uppercase tracking-wider font-mono">
                 当前运行中收款码预览
               </span>
-              {adminQrUrl ? (
-                <div className="relative group">
-                  <img
-                    src={adminQrUrl}
-                    alt="Current Cloud Collection QR"
-                    className="w-40 h-40 object-contain rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-transform hover:scale-102"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity animate-fade-in">
-                    <span className="text-white text-[10px] font-bold">运行中</span>
-                  </div>
+              <div className="flex gap-4 w-full justify-center">
+                <div className="flex flex-col items-center">
+                  {adminQrUrl ? (
+                    <div className="relative group">
+                      <img
+                        src={adminQrUrl}
+                        alt="Current WeChat QR"
+                        className="w-24 h-24 sm:w-32 sm:h-32 object-contain rounded-xl border border-emerald-200 bg-white p-2 shadow-sm transition-transform hover:scale-102"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity animate-fade-in">
+                        <span className="text-white text-[10px] font-bold">微信收款码</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-24 h-24 sm:w-32 sm:h-32 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-emerald-300 bg-white/60 text-emerald-400 p-2 text-center">
+                      <QrCode className="w-6 h-6 mb-1" />
+                      <span className="text-[9px] font-bold">未配置微信</span>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="w-40 h-40 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-white/60 text-slate-405 p-4 text-center">
-                  <QrCode className="w-8 h-8 text-slate-350 mb-2" />
-                  <span className="text-[10px] font-bold">未配置收款码</span>
+                <div className="flex flex-col items-center">
+                  {adminAlipayQrUrl ? (
+                    <div className="relative group">
+                      <img
+                        src={adminAlipayQrUrl}
+                        alt="Current Alipay QR"
+                        className="w-24 h-24 sm:w-32 sm:h-32 object-contain rounded-xl border border-sky-200 bg-white p-2 shadow-sm transition-transform hover:scale-102"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity animate-fade-in">
+                        <span className="text-white text-[10px] font-bold">支付宝收款码</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="w-24 h-24 sm:w-32 sm:h-32 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-sky-300 bg-white/60 text-sky-400 p-2 text-center">
+                      <QrCode className="w-6 h-6 mb-1" />
+                      <span className="text-[9px] font-bold">未配置支付宝</span>
+                    </div>
+                  )}
                 </div>
-              )}
-              <span className="text-[9px] text-slate-400 font-mono mt-3 max-w-[200px] truncate">
-                源: {adminQrUrl.startsWith('data:') ? '本地上传 (Base64 编码)' : adminQrUrl || '空'}
-              </span>
+              </div>
             </div>
 
             {/* Right Box: Settings Form */}
@@ -505,19 +526,19 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
               <div className="p-3.5 bg-amber-500/[0.03] border border-amber-500/15 rounded-2xl">
                 <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
                   <span className="font-sans font-bold text-amber-600">💡 运行逻辑：</span>
-                  此处的收款码将用于全局交易对账。管理员在此上传或更改收款码并保存后，会热部署覆盖系统默认的收款绑定。全体普通访客在前台点击【升级账户】时会实现在线热更新，无需重新部署代码即可瞬间生效！
+                  此处的收款码将用于全局交易对账。管理员分别上传微信和支付宝收款码并保存后，会热部署覆盖系统默认的收款绑定。全体普通访客在前台点击【升级账户】时会实现在线热更新。
                 </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Method A: File Upload */}
-                <div className="border border-slate-150 rounded-2xl p-4 bg-white/50 space-y-3 relative hover:border-slate-300 transition-colors">
-                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-800 uppercase tracking-tight">
-                    <Upload className="w-4 h-4 text-red-500" />
-                    <span>方式一：本地上传收款码</span>
+                {/* WeChat Upload */}
+                <div className="border border-emerald-100 rounded-2xl p-4 bg-emerald-50/30 space-y-3 relative hover:border-emerald-300 transition-colors">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-emerald-800 uppercase tracking-tight">
+                    <Upload className="w-4 h-4 text-emerald-500" />
+                    <span>微信收款码配置</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    支持从本地选择微信或支付宝生成的付款二维码图片。
+                  <p className="text-[10px] text-emerald-600/70 leading-normal">
+                    支持从本地选择微信生成的付款二维码图片。
                   </p>
                   
                   <div className="relative">
@@ -527,39 +548,46 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                       onChange={handleAdminLocalFileChange}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     />
-                    <div className="w-full py-3 border-2 border-dashed border-slate-250 hover:border-red-500/30 rounded-xl bg-slate-50 hover:bg-slate-100/50 transition-colors flex items-center justify-center gap-2">
-                      <Upload className="w-3.5 h-3.5 text-slate-400" />
-                      <span className="text-[11px] text-slate-600 font-bold">选择本地图片</span>
+                    <div className="w-full py-3 border-2 border-dashed border-emerald-200 hover:border-emerald-500/50 rounded-xl bg-white hover:bg-emerald-50 transition-colors flex items-center justify-center gap-2">
+                      <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="text-[11px] text-emerald-600 font-bold">选择微信图片</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Method B: URL Link */}
-                <div className="border border-slate-150 rounded-2xl p-4 bg-white/50 space-y-3 hover:border-slate-300 transition-colors">
-                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-800 uppercase tracking-tight">
-                    <ExternalLink className="w-4 h-4 text-red-500" />
-                    <span>方式二：网络图片 URL</span>
+                {/* Alipay Upload */}
+                <div className="border border-sky-100 rounded-2xl p-4 bg-sky-50/30 space-y-3 relative hover:border-sky-300 transition-colors">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-sky-800 uppercase tracking-tight">
+                    <Upload className="w-4 h-4 text-sky-500" />
+                    <span>支付宝收款码配置</span>
                   </div>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    如果您已将收款码图片托管至图床，亦可直接输入其在线 URL 网址。
+                  <p className="text-[10px] text-sky-600/70 leading-normal">
+                    支持从本地选择支付宝生成的付款二维码图片。
                   </p>
-                  <input
-                    type="text"
-                    value={adminQrUrl.startsWith('data:') ? '' : adminQrUrl}
-                    onChange={(e) => setAdminQrUrl(e.target.value)}
-                    placeholder="https://example.com/pay_qr.png"
-                    className="w-full h-9 bg-slate-50 hover:bg-slate-100/50 border border-slate-250 rounded-xl px-3 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all placeholder:text-slate-405"
-                  />
+                  
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAdminAlipayLocalFileChange}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="w-full py-3 border-2 border-dashed border-sky-200 hover:border-sky-500/50 rounded-xl bg-white hover:bg-sky-50 transition-colors flex items-center justify-center gap-2">
+                      <Upload className="w-3.5 h-3.5 text-sky-400" />
+                      <span className="text-[11px] text-sky-600 font-bold">选择支付宝图片</span>
+                    </div>
+                  </div>
                 </div>
               </div>
 
               {/* Action save button */}
               <div className="flex items-center justify-end gap-3 pt-2">
-                {adminQrUrl && (
+                {(adminQrUrl || adminAlipayQrUrl) && (
                   <button
                     type="button"
                     onClick={() => {
                       setAdminQrUrl('');
+                      setAdminAlipayQrUrl('');
                       showToast('预览已重置，请点击右侧“保存配置并部署上线”按钮应用修改。', 'info');
                     }}
                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl border border-slate-250 transition-all select-none cursor-pointer"
