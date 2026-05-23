@@ -772,20 +772,20 @@ export const VipModal: React.FC<VipModalProps> = ({
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
                     {/* 左侧：双重付款二维码展示 */}
-                    <div className="flex flex-col items-center justify-center space-y-4 bg-slate-950/40 p-4 rounded-3xl border border-white/5">
-                      <div className="flex gap-4">
+                    <div className="flex flex-col items-center justify-center space-y-4 bg-slate-950/40 p-4 shrink-0 rounded-3xl border border-white/5">
+                      <div className="flex gap-4 w-full justify-center">
                         {/* 微信二维码 */}
-                        <div className="flex flex-col items-center space-y-2">
-                          <div className="relative p-2 bg-white rounded-2xl border-2 border-emerald-500/25">
+                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[220px]">
+                          <div className="relative p-2 bg-white rounded-2xl border-2 border-emerald-500/25 w-full aspect-square">
                             {customQrUrl ? (
                               <img 
                                 src={customQrUrl} 
-                                className="w-48 h-48 object-contain rounded-xl" 
+                                className="w-full h-full object-contain rounded-xl" 
                                 alt="微信收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-48 h-48 flex items-center justify-center bg-slate-100 rounded-xl">
+                              <div className="w-full h-full flex items-center justify-center bg-slate-100 rounded-xl">
                                 <QrCode className="w-12 h-12 text-slate-400" />
                               </div>
                             )}
@@ -797,17 +797,17 @@ export const VipModal: React.FC<VipModalProps> = ({
                         </div>
 
                         {/* 支付宝二维码 */}
-                        <div className="flex flex-col items-center space-y-2">
-                          <div className="relative p-2 bg-white rounded-2xl border-2 border-sky-500/25">
+                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[220px]">
+                          <div className="relative p-2 bg-white rounded-2xl border-2 border-sky-500/25 w-full aspect-square">
                             {customAlipayQrUrl ? (
                               <img 
                                 src={customAlipayQrUrl} 
-                                className="w-48 h-48 object-contain rounded-xl" 
+                                className="w-full h-full object-contain rounded-xl" 
                                 alt="支付宝收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-48 h-48 flex items-center justify-center bg-slate-100 rounded-xl">
+                              <div className="w-full h-full flex items-center justify-center bg-slate-100 rounded-xl">
                                 <QrCode className="w-12 h-12 text-slate-400" />
                               </div>
                             )}

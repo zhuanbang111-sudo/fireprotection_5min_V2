@@ -69,8 +69,8 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
   };
 
   // Fetch orders from server (verifies admin privileges via response code)
-  const fetchOrders = async () => {
-    setIsLoading(true);
+  const fetchOrders = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const token = localStorage.getItem('fire_isochrone_auth_token');
       const res = await axios.get('/api/orders', {
@@ -94,7 +94,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
         showToast('获取订单列表时发生异常，请稍后重试。', 'error');
       }
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   };
 
@@ -264,14 +264,17 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
       });
 
       if (res.data.success) {
+        // 先做乐观更新：理解更新本地状态，实现界面秒级响应及统计数据的同步
+        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status, updated_at: new Date().toISOString() } : o));
+
         showToast(
           status === 'success' 
             ? '🎉 该订单核确成功！核对款项无误，用户已秒级自动升级为 PRO 会员。' 
             : '❌ 该订单已作废/驳回。', 
           status === 'success' ? 'success' : 'info'
         );
-        // Soft refresh orders
-        await fetchOrders();
+        // Soft refresh orders silently in the background
+        fetchOrders(true);
       } else {
         showToast(res.data.message || '操作失败，请重试', 'error');
       }
@@ -712,7 +715,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  已驳回 ({orders.filter(o => o.status === 'rejected').length})
+                  拒绝通过 ({orders.filter(o => o.status === 'rejected').length})
                 </button>
                 <button
                   onClick={() => setStatusFilter('all')}
@@ -728,7 +731,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
             </div>
 
             <button
-              onClick={fetchOrders}
+              onClick={() => fetchOrders()}
               disabled={isLoading}
               className="px-4 h-10 bg-white hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-250 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
@@ -840,10 +843,10 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                             order.status === 'success' 
                               ? 'bg-emerald-50 text-emerald-700 border-emerald-250/50'
                               : order.status === 'rejected'
-                              ? 'bg-slate-100 text-slate-450 border-slate-250/50'
+                              ? 'bg-rose-50 text-rose-600 border-rose-200/50'
                               : 'bg-amber-50 text-amber-700 border-amber-250/60 animate-pulse'
                           }`}>
-                            {order.status === 'success' ? '已过账放行' : order.status === 'rejected' ? '被驳回' : '等待确收'}
+                            {order.status === 'success' ? '已过账放行' : order.status === 'rejected' ? '拒绝通过' : '等待确收'}
                           </span>
                         </td>
 
