@@ -412,7 +412,7 @@ export default function App() {
       
       addLog('✅ 已安全退出登录');
       setUser(null);
-      window.location.reload();
+      window.location.href = '/';
     } catch (error) {
       console.error('Logout failed:', error);
       addLog('❌ 退出过程中出现外部异常');

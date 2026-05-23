@@ -10,7 +10,7 @@ type Variables = {
   user?: any;
 };
 
-const app = new Hono<{ Bindings: Bindings; Variables: Variables }>().basePath('/api');
+const apiApp = new Hono<{ Bindings: Bindings; Variables: Variables }>().basePath('/api');
 
 // ---【全局状态：演示账户限额】---
 // 注意：Workers 内存不持久，仅供同一实例内简单演示计次
@@ -102,7 +102,7 @@ const checkUsageLimit = async (c: any, next: any) => {
 // ---【认证接口】---
 
 // 健康检查
-app.all('/health', (c) => {
+apiApp.all('/health', (c) => {
   const hasDB = !!c.env.DB;
   return c.json({
     status: 'ok',
@@ -113,7 +113,7 @@ app.all('/health', (c) => {
 });
 
 // 1. 用户注册
-app.post('/auth/register', async (c) => {
+apiApp.post('/auth/register', async (c) => {
   try {
     const body = await c.req.json();
     const { email, password, displayName } = body;
@@ -173,7 +173,7 @@ app.post('/auth/register', async (c) => {
 });
 
 // 2. 用户登录
-app.post('/auth/login', async (c) => {
+apiApp.post('/auth/login', async (c) => {
   try {
     const body = await c.req.json();
     const { email, password } = body;
@@ -229,7 +229,7 @@ app.post('/auth/login', async (c) => {
 });
 
 // 3. 用户自核验
-app.get('/auth/me', async (c) => {
+apiApp.get('/auth/me', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -276,7 +276,7 @@ app.get('/auth/me', async (c) => {
 });
 
 // 4. 用户 VIP 激活与升级
-app.post('/auth/upgrade', async (c) => {
+apiApp.post('/auth/upgrade', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -328,7 +328,7 @@ app.post('/auth/upgrade', async (c) => {
 });
 
 // 5. 用户反馈提交
-app.post('/feedback', async (c) => {
+apiApp.post('/feedback', async (c) => {
   try {
     const body = await c.req.json();
     const { userId, email, content, screenshot } = body;
@@ -358,7 +358,7 @@ app.post('/feedback', async (c) => {
 // ---【D1 TRANSACTION, ORDER & SYSTEM QR CODE PIPELINES】---
 
 // 1. 获取全局唯一的系统收款码
-app.get('/system/qr', async (c) => {
+apiApp.get('/system/qr', async (c) => {
   try {
     const DB = c.env.DB;
     if (!DB) {
@@ -375,7 +375,7 @@ app.get('/system/qr', async (c) => {
 });
 
 // 2. 超级管理员安全配置收款码
-app.post('/system/qr', async (c) => {
+apiApp.post('/system/qr', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -415,7 +415,7 @@ app.post('/system/qr', async (c) => {
 });
 
 // 3. 用户提交转账核验申请订单
-app.post('/orders', async (c) => {
+apiApp.post('/orders', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -456,7 +456,7 @@ app.post('/orders', async (c) => {
 });
 
 // 4. 获取订单记录
-app.get('/orders', async (c) => {
+apiApp.get('/orders', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -494,7 +494,7 @@ app.get('/orders', async (c) => {
 });
 
 // 5. 超级管理员：一键手动审批或作废订单
-app.post('/orders/approve', async (c) => {
+apiApp.post('/orders/approve', async (c) => {
   try {
     const authHeader = c.req.header('authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -622,7 +622,7 @@ function bd09_to_gcj02(bd_lon: number, bd_lat: number) {
 /**
  * ---【核心业务逻辑】分析与测算 ---
  */
-app.post('/analyze', checkUsageLimit, async (c) => {
+apiApp.post('/analyze', checkUsageLimit, async (c) => {
   const body = await c.req.json();
   const { apiKeys, origin, targetMin, factor, coordSystem, entrySpeed, entryPenalty } = body;
 
@@ -715,6 +715,31 @@ app.post('/analyze', checkUsageLimit, async (c) => {
     wgsOrigin: [wgsLng, wgsLat],
     remaining: c.get('remaining')
   });
+});
+
+// Create top-level Hono app to bundle both api routes and SPA assets fallback
+const app = new Hono<{ Bindings: Bindings & { ASSETS?: any }; Variables: Variables }>();
+
+// Route both API & static files fallback
+app.route('/', apiApp);
+
+// SPA Routing Fallback for Cloudflare Worker Assets
+app.get('*', async (c) => {
+  // If request begins with /api but didn't match any route, return API Not Found
+  if (c.req.path.startsWith('/api')) {
+    return c.json({ success: false, message: 'API Route Not Found' }, 404);
+  }
+  try {
+    const assets = c.env.ASSETS;
+    if (assets) {
+      // Fetch and serve index.html directly from ASSETS
+      const response = await assets.fetch(new URL('/', c.req.url).toString());
+      return response;
+    }
+    return c.text('Cloudflare ASSETS binding not found', 500);
+  } catch (err: any) {
+    return c.text(`Not Found: ${err.message}`, 404);
+  }
 });
 
 export default app;

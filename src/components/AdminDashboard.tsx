@@ -19,7 +19,9 @@ import {
   Sparkles,
   ClipboardCheck,
   Ban,
-  Database
+  Database,
+  QrCode,
+  Upload
 } from 'lucide-react';
 
 interface Order {
@@ -95,8 +97,70 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
     }
   };
 
+  // 1. 系统配置数据绑定的收款码
+  const [adminQrUrl, setAdminQrUrl] = useState('');
+  const [isConfigSaving, setIsConfigSaving] = useState(false);
+
+  // 获取服务端的全局收款码配置 (热更新)
+  const fetchSystemQr = async () => {
+    try {
+      const res = await axios.get('/api/system/qr');
+      if (res.data.success) {
+        setAdminQrUrl(res.data.qrUrl || '');
+      }
+    } catch (e) {
+      console.error('[Admin] 获取服务端收款配置出错:', e);
+    }
+  };
+
+  // 处理管理员本地替换上传 (Base64)
+  const handleAdminLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        setAdminQrUrl(base64);
+        showToast('图片读取成功！请点击下方的“保存并上线”按钮，将收款码实时在线部署发布！', 'info');
+      }
+    };
+    reader.onerror = () => {
+      showToast('读取图片文件失败，请尝试其他格式。', 'error');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 超级管理员保存系统全局配置
+  const handleSaveSystemQr = async () => {
+    const token = localStorage.getItem('fire_isochrone_auth_token');
+    if (!token) return;
+
+    setIsConfigSaving(true);
+    try {
+      const res = await axios.post('/api/system/qr', {
+        qrUrl: adminQrUrl
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.data.success) {
+        showToast('🎉 全局云端收款码热部署上线！前台全体普通访客现在将直接显示此新收款信息。', 'success');
+      } else {
+        throw new Error(res.data.message || '保存配置失败');
+      }
+    } catch (e: any) {
+      console.error('[Save Config Error]', e);
+      showToast(e.response?.data?.message || '配置上传失败', 'error');
+    } finally {
+      setIsConfigSaving(false);
+    }
+  };
+
   useEffect(() => {
     fetchOrders();
+    fetchSystemQr();
   }, []);
 
   // Filter orders based on filter selection and search bar (fuzzy search email, order id, memo)
@@ -315,6 +379,141 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
             </div>
           </div>
 
+        </div>
+
+        {/* 💳 收款系统全球热部署中枢 */}
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden p-6">
+          <div className="flex items-center gap-3 border-b border-slate-100 pb-4 mb-5">
+            <div className="p-2.5 bg-red-600/10 text-red-650 rounded-2xl border border-red-100">
+              <QrCode className="w-5 h-5 shrink-0" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-900">
+                收款系统配置中心 (全局热部署中枢)
+              </h3>
+              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider font-mono">
+                GLOBAL PAYMENT GATEWAY CUSTOMIZATION & LIVE HOT-DEPLOY
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Left Box: Current QR Preview */}
+            <div className="lg:col-span-4 flex flex-col items-center justify-center p-4 bg-slate-50 rounded-2xl border border-slate-100 min-h-[220px]">
+              <span className="text-[10px] text-slate-405 font-bold mb-3 uppercase tracking-wider font-mono">
+                当前运行中收款码预览
+              </span>
+              {adminQrUrl ? (
+                <div className="relative group">
+                  <img
+                    src={adminQrUrl}
+                    alt="Current Cloud Collection QR"
+                    className="w-40 h-40 object-contain rounded-xl border border-slate-200 bg-white p-2 shadow-sm transition-transform hover:scale-102"
+                    referrerPolicy="no-referrer"
+                  />
+                  <div className="absolute inset-0 bg-black/40 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity animate-fade-in">
+                    <span className="text-white text-[10px] font-bold">运行中</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-40 h-40 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-white/60 text-slate-405 p-4 text-center">
+                  <QrCode className="w-8 h-8 text-slate-350 mb-2" />
+                  <span className="text-[10px] font-bold">未配置收款码</span>
+                </div>
+              )}
+              <span className="text-[9px] text-slate-400 font-mono mt-3 max-w-[200px] truncate">
+                源: {adminQrUrl.startsWith('data:') ? '本地上传 (Base64 编码)' : adminQrUrl || '空'}
+              </span>
+            </div>
+
+            {/* Right Box: Settings Form */}
+            <div className="lg:col-span-8 space-y-4">
+              <div className="p-3.5 bg-amber-500/[0.03] border border-amber-500/15 rounded-2xl">
+                <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
+                  <span className="font-sans font-bold text-amber-600">💡 运行逻辑：</span>
+                  此处的收款码将用于全局交易对账。管理员在此上传或更改收款码并保存后，会热部署覆盖系统默认的收款绑定。全体普通访客在前台点击【升级账户】时会实现在线热更新，无需重新部署代码即可瞬间生效！
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Method A: File Upload */}
+                <div className="border border-slate-150 rounded-2xl p-4 bg-white/50 space-y-3 relative hover:border-slate-300 transition-colors">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-800 uppercase tracking-tight">
+                    <Upload className="w-4 h-4 text-red-500" />
+                    <span>方式一：本地上传收款码</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    支持从本地选择微信或支付宝生成的付款二维码图片。
+                  </p>
+                  
+                  <div className="relative">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAdminLocalFileChange}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="w-full py-3 border-2 border-dashed border-slate-250 hover:border-red-500/30 rounded-xl bg-slate-50 hover:bg-slate-100/50 transition-colors flex items-center justify-center gap-2">
+                      <Upload className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-[11px] text-slate-600 font-bold">选择本地图片</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Method B: URL Link */}
+                <div className="border border-slate-150 rounded-2xl p-4 bg-white/50 space-y-3 hover:border-slate-300 transition-colors">
+                  <div className="flex items-center gap-1.5 text-xs font-black text-slate-800 uppercase tracking-tight">
+                    <ExternalLink className="w-4 h-4 text-red-500" />
+                    <span>方式二：网络图片 URL</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    如果您已将收款码图片托管至图床，亦可直接输入其在线 URL 网址。
+                  </p>
+                  <input
+                    type="text"
+                    value={adminQrUrl.startsWith('data:') ? '' : adminQrUrl}
+                    onChange={(e) => setAdminQrUrl(e.target.value)}
+                    placeholder="https://example.com/pay_qr.png"
+                    className="w-full h-9 bg-slate-50 hover:bg-slate-100/50 border border-slate-250 rounded-xl px-3 text-[11px] font-medium focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all placeholder:text-slate-405"
+                  />
+                </div>
+              </div>
+
+              {/* Action save button */}
+              <div className="flex items-center justify-end gap-3 pt-2">
+                {adminQrUrl && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminQrUrl('');
+                      showToast('预览已重置，请点击右侧“保存配置并部署上线”按钮应用修改。', 'info');
+                    }}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-xl border border-slate-250 transition-all select-none cursor-pointer"
+                  >
+                    重置清空
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={isConfigSaving}
+                  onClick={handleSaveSystemQr}
+                  className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-black rounded-xl transition-all shadow-md shadow-red-900/10 flex items-center gap-1.5 select-none cursor-pointer disabled:opacity-50"
+                >
+                  {isConfigSaving ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>正在部署...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>保存配置并部署上线</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* 📋 Central Datagrid Filter Panel */}
