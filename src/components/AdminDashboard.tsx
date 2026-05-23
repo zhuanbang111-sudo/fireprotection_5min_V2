@@ -702,17 +702,17 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  已放行
+                  已放行 ({orders.filter(o => o.status === 'success').length})
                 </button>
                 <button
                   onClick={() => setStatusFilter('rejected')}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                     statusFilter === 'rejected' 
-                      ? 'bg-slate-400 text-white shadow-sm' 
+                      ? 'bg-rose-500 text-white shadow-sm' 
                       : 'text-slate-500 hover:text-slate-800'
                   }`}
                 >
-                  已驳回
+                  已驳回 ({orders.filter(o => o.status === 'rejected').length})
                 </button>
                 <button
                   onClick={() => setStatusFilter('all')}
@@ -769,7 +769,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                     
                     return (
                       <tr 
-                        key={`${order.id}-${idx}`} 
+                        key={`admin-order-${order.id}-${idx}`} 
                         className={`hover:bg-slate-50/70 transition-colors ${
                           isPending ? 'bg-amber-500/[0.01]' : ''
                         }`}
@@ -870,9 +870,15 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                               </button>
                             </div>
                           ) : (
-                            <span className="text-[10px] text-slate-400 italic">
-                              {order.status === 'success' ? '于 ' + new Date(order.updated_at || order.created_at).toLocaleDateString() + ' 完成' : '已归档'}
-                            </span>
+                            order.status === 'success' ? (
+                              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
+                                已放行
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-rose-500 font-bold bg-rose-50 px-2 py-1 rounded-md border border-rose-100">
+                                拒绝通过
+                              </span>
+                            )
                           )}
                         </td>
 

@@ -546,7 +546,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                 ) : (
                   <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                     {orders.map((item, idx) => (
-                      <div key={`${item.id}-${idx}`} className="bg-slate-950/70 border border-slate-800/60 rounded-xl p-3.5 space-y-3 text-xs leading-normal">
+                      <div key={`order-item-${item.id}-${idx}`} className="bg-slate-950/70 border border-slate-800/60 rounded-xl p-3.5 space-y-3 text-xs leading-normal">
                         <div className="flex items-start justify-between">
                           <div>
                             <p className="font-bold text-slate-100 font-mono text-[11px]">单号: {item.id}</p>
@@ -780,13 +780,13 @@ export const VipModal: React.FC<VipModalProps> = ({
                             {customQrUrl ? (
                               <img 
                                 src={customQrUrl} 
-                                className="w-24 h-24 object-contain rounded-xl" 
+                                className="w-48 h-48 object-contain rounded-xl" 
                                 alt="微信收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-24 h-24 flex items-center justify-center bg-slate-100 rounded-xl">
-                                <QrCode className="w-8 h-8 text-slate-400" />
+                              <div className="w-48 h-48 flex items-center justify-center bg-slate-100 rounded-xl">
+                                <QrCode className="w-12 h-12 text-slate-400" />
                               </div>
                             )}
                           </div>
@@ -802,13 +802,13 @@ export const VipModal: React.FC<VipModalProps> = ({
                             {customAlipayQrUrl ? (
                               <img 
                                 src={customAlipayQrUrl} 
-                                className="w-24 h-24 object-contain rounded-xl" 
+                                className="w-48 h-48 object-contain rounded-xl" 
                                 alt="支付宝收单二维码" 
                                 referrerPolicy="no-referrer"
                               />
                             ) : (
-                              <div className="w-24 h-24 flex items-center justify-center bg-slate-100 rounded-xl">
-                                <QrCode className="w-8 h-8 text-slate-400" />
+                              <div className="w-48 h-48 flex items-center justify-center bg-slate-100 rounded-xl">
+                                <QrCode className="w-12 h-12 text-slate-400" />
                               </div>
                             )}
                           </div>
@@ -888,7 +888,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                       <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-widest">您的申领账单核查状态历史 (D1 Records)：</span>
                       <div className="space-y-1.5 text-[10px] max-h-24 overflow-y-auto pr-1">
                         {orders.map((item, idx) => (
-                          <div key={`${item.id}-${idx}`} className="flex items-center justify-between py-1 border-b border-white/5 font-mono">
+                          <div key={`order-history-${item.id}-${idx}`} className="flex items-center justify-between py-1 border-b border-white/5 font-mono">
                             <span className="text-slate-400">单号: {item.id}</span>
                             <span className="text-slate-300">凭证: {item.voucher_name}</span>
                             <span className={`px-1 rounded-sm text-[8px] font-bold ${

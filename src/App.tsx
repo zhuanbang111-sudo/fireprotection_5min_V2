@@ -1311,7 +1311,7 @@ export default function App() {
                         { h: 'incidentLat', d: '火警点纬度' },
                         { h: 'actualTotalTime', d: '实际总耗时(秒)' },
                       ].map((item, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm">
+                        <div key={`calib-col-${idx}`} className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-slate-100 shadow-sm">
                           <code className="text-[10px] font-bold text-red-600">{item.h}</code>
                           <span className="text-[10px] text-slate-400">{item.d}</span>
                         </div>
@@ -1431,7 +1431,7 @@ export default function App() {
             <div className="space-y-1">
               {/* 循环渲染日志列表中的每一条信息 */}
               {logs.map((log, i) => (
-                <div key={i} className="text-[10px] font-mono text-slate-600 break-words leading-relaxed">
+                <div key={`log-item-${i}`} className="text-[10px] font-mono text-slate-600 break-words leading-relaxed">
                   {log}
                 </div>
               ))}
@@ -1512,7 +1512,7 @@ export default function App() {
 
                 {/* 渲染分析结果：在地图上绘制站点图标和等时圈图形 */}
                 {results.map((res, i) => (
-                  <LayersControl.Overlay key={`result-overlay-${res.station.station_name}-${i}`} checked name={res.station.station_name}>
+                  <LayersControl.Overlay key={`result-overlay-${res.station.station_name}-${i}`} checked name={`${res.station.station_name} #${i + 1}`}>
                     {/* 站点坐标标记 (Marker) */}
                     <Marker 
                       key={`marker-${res.station.station_name}-${i}`}
@@ -1613,7 +1613,7 @@ export default function App() {
                   <tbody className="divide-y divide-slate-100">
                     {/* 循环结果数组并输出各行数据 */}
                     {results.map((res, i) => (
-                      <tr key={i} className="hover:bg-slate-50 transition-colors">
+                      <tr key={`res-tr-${i}`} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4 text-sm font-bold text-slate-700">{res.station.station_name}</td>
                         <td className="px-6 py-4">
                           {/* 覆盖面积徽章样式 */}
