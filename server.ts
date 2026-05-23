@@ -555,7 +555,7 @@ apiRouter.post('/system/qr', async (req, res) => {
     }
 
     const { qrUrl } = req.body;
-    await env.DB.prepare("INSERT INTO system_configs (key, value) VALUES (?, ?)")
+    await env.DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
       .bind('payment_qr_code_url', qrUrl || '')
       .run();
 

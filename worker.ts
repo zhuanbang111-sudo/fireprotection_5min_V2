@@ -338,6 +338,205 @@ app.post('/feedback', async (c) => {
   }
 });
 
+// ---【D1 TRANSACTION, ORDER & SYSTEM QR CODE PIPELINES】---
+
+// 1. 获取全局唯一的系统收款码
+app.get('/system/qr', async (c) => {
+  try {
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, qrUrl: '' });
+    }
+    const qrConfig = await DB.prepare("SELECT * FROM system_configs WHERE key = ?").bind('payment_qr_code_url').first();
+    return c.json({
+      success: true,
+      qrUrl: qrConfig?.value || ''
+    });
+  } catch (e: any) {
+    return c.json({ success: false, qrUrl: '' });
+  }
+});
+
+// 2. 超级管理员安全配置收款码
+app.post('/system/qr', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    if (!isAdmin) {
+      return c.json({ success: false, message: '无管理员操作权限' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { qrUrl } = body;
+    
+    // 使用 SQLite REPLACE INTO 实现简洁安全的覆盖性更新
+    await DB.prepare("INSERT OR REPLACE INTO system_configs (key, value) VALUES (?, ?)")
+      .bind('payment_qr_code_url', qrUrl || '')
+      .run();
+
+    console.log(`[Admin Control Worker] 收款信息已被管理员 ${user.email} 升级为自定义源`);
+    return c.json({ success: true, message: '收款码更新成功', qrUrl });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '系统错误' }, 500);
+  }
+});
+
+// 3. 用户提交转账核验申请订单
+app.post('/orders', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '请先登录账号后提交转账记录' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期，请重新登录' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { paymentMethod, amount, voucherName, voucherScreenshot } = body;
+    if (!voucherName) {
+      return c.json({ success: false, message: '请填写转账昵称或支付凭证号以供比对' }, 400);
+    }
+
+    const orderId = `ord_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    
+    await DB.prepare("INSERT INTO orders (id, user_id, email, payment_method, amount, voucher_name, voucher_screenshot, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .bind(orderId, user.id, user.email, paymentMethod || '微信/支付宝', amount || 399, voucherName, voucherScreenshot || '', 'pending', createdAt)
+      .run();
+
+    console.log(`[Order Processing Worker] 用户 ${user.email} 新提交一笔订单: ID=${orderId}, 凭证=${voucherName}`);
+    return c.json({ success: true, message: '账单凭证提交成功！系统管理员核款确收后会自动极速升级您的账号。', orderId });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '账单提交异常' }, 500);
+  }
+});
+
+// 4. 获取订单记录
+app.get('/orders', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    let ordersData: any;
+    if (isAdmin) {
+      ordersData = await DB.prepare("SELECT * FROM orders").all();
+    } else {
+      ordersData = await DB.prepare("SELECT * FROM orders WHERE user_id = ?").bind(user.id).all();
+    }
+
+    const rawOrders = Array.isArray(ordersData) ? ordersData : (ordersData?.results || []);
+    const sortedOrders = [...rawOrders].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return c.json({ success: true, orders: sortedOrders });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '系统错误' }, 500);
+  }
+});
+
+// 5. 超级管理员：一键手动审批或作废订单
+app.post('/orders/approve', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+    const isAdmin = user.vip_level === 'admin' || user.email === 'zhuanbang111@gmail.com';
+    if (!isAdmin) {
+      return c.json({ success: false, message: '无管理员操作权限' }, 403);
+    }
+
+    const body = await c.req.json();
+    const { orderId, status } = body;
+    if (!orderId || !status) {
+      return c.json({ success: false, message: '订单ID和状态(status)为必填项' }, 400);
+    }
+
+    const order = await DB.prepare("SELECT * FROM orders WHERE id = ?").bind(orderId).first();
+    if (!order) {
+      return c.json({ success: false, message: '目标账单未找到' }, 404);
+    }
+
+    const updatedAt = new Date().toISOString();
+    await DB.prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status, updatedAt, orderId)
+      .run();
+
+    if (status === 'success') {
+      const expiration = new Date();
+      expiration.setFullYear(expiration.getFullYear() + 1); // 账期 1 年
+      const expiresStr = expiration.toISOString();
+
+      await DB.prepare("UPDATE users SET vip_level = 'pro', vip_expires_at = ? WHERE id = ?")
+        .bind(expiresStr, order.user_id)
+        .run();
+      
+      console.log(`[Admin Action Worker] 订单审核通过，成功赋权: 用户=${order.email}, 到期时间=${expiresStr}`);
+    } else {
+      console.log(`[Admin Action Worker] 订单审核拒绝/作废: ID=${orderId}, 申请者=${order.email}`);
+    }
+
+    return c.json({ success: true, message: `账单已审核更新为: ${status === 'success' ? '已支付过账' : '异常拒绝'}` });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '审核处理异常' }, 500);
+  }
+});
+
 /**
  * --- 坐标转换计算核心 (移植自 server.ts) ---
  */
