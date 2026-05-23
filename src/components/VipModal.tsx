@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, Smartphone, Loader2 } from 'lucide-react';
+import { X, Crown, ShieldAlert, Sparkles, Database, FileDown, Zap, ArrowRight, CheckCircle2, QrCode, ArrowLeft, Heart, Check, Smartphone, Loader2, Settings, Upload } from 'lucide-react';
 import axios from 'axios';
 
 // ==========================================
@@ -29,6 +29,32 @@ export const VipModal: React.FC<VipModalProps> = ({
   const [paySuccess, setPaySuccess] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [upgradeError, setUpgradeError] = useState('');
+
+  // 自定义可替换收单收款码配置状态
+  const [customQrUrl, setCustomQrUrl] = useState(() => {
+    return localStorage.getItem('custom_payment_qr') || import.meta.env.VITE_PAYMENT_QR_CODE_URL || '';
+  });
+  const [isEditingQr, setIsEditingQr] = useState(false);
+  const [tempQrUrl, setTempQrUrl] = useState(customQrUrl);
+
+  // 本地拖拽或文件选择读取为 Base64 替换接口
+  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      if (base64) {
+        setTempQrUrl(base64);
+        setUpgradeError(''); // 清空旧错误
+      }
+    };
+    reader.onerror = () => {
+      setUpgradeError('读取图片文件失败，请重试或换用图片 URL 链接。');
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSimulatedPay = async () => {
     const token = localStorage.getItem('fire_isochrone_auth_token');
@@ -268,55 +294,185 @@ export const VipModal: React.FC<VipModalProps> = ({
                     )}
                   </div>
 
-                  {/* 收费二维码 (微信+支付宝 双通道极简几何 SVG 模拟) */}
+                  {/* 收费二维码 (支持动态配置微信/支付宝自定义收款码图片或自动使用内置全能矢量 SVG 模拟) */}
                   <div className="flex flex-col items-center space-y-3">
-                    <div className="relative p-3 bg-white rounded-3xl shadow-[0_0_30px_rgba(245,158,11,0.1)] border-2 border-amber-550/30">
+                    <div className="relative p-3 bg-white rounded-3xl shadow-[0_0_30px_rgba(245,158,11,0.1)] border-2 border-amber-500/30">
                       {/* 二维码外边框炫彩边 */}
                       <div className="absolute inset-x-0 -top-1 mx-auto w-24 h-1 bg-gradient-to-r from-amber-500 to-yellow-400 rounded-full" />
                       
-                      {/* 纯 SVG 大气二维码图形 */}
-                      <svg
-                        className="w-40 h-40 text-slate-900"
-                        viewBox="0 0 100 100"
-                        shapeRendering="crispEdges"
-                      >
-                        {/* 四角定位图案 (Finder patterns) */}
-                        <path d="M0 0h25v25H0zm3 3v19h19V3zm3 3h13v13H6z" fill="currentColor" />
-                        <path d="M75 0h25v25H75zm3 3v19h19V3zm3 3h13v13H81z" fill="currentColor" />
-                        <path d="M0 75h25v25H0zm3 78v19h19V78zm3 3h13v13H6z" fill="currentColor" />
-                        
-                        {/* 三处定位点（内角） */}
-                        <rect x="9" y="9" width="7" height="7" fill="currentColor" />
-                        <rect x="84" y="9" width="7" height="7" fill="currentColor" />
-                        <rect x="9" y="84" width="7" height="7" fill="currentColor" />
+                      {customQrUrl ? (
+                        <img 
+                          src={customQrUrl} 
+                          className="w-40 h-40 object-contain rounded-2xl mx-auto" 
+                          alt="自定义收款二维码" 
+                          referrerPolicy="no-referrer"
+                          onError={() => {
+                            setUpgradeError('自定义收款二维码图片加载失败，请检查链接配置或重新上传。');
+                          }}
+                        />
+                      ) : (
+                        /* 纯 SVG 大气二维码图形 */
+                        <svg
+                          className="w-40 h-40 text-slate-900"
+                          viewBox="0 0 100 100"
+                          shapeRendering="crispEdges"
+                        >
+                          {/* 四角定位图案 (Finder patterns) */}
+                          <path d="M0 0h25v25H0zm3 3v19h19V3zm3 3h13v13H6z" fill="currentColor" />
+                          <path d="M75 0h25v25H75zm3 3v19h19V3zm3 3h13v13H81z" fill="currentColor" />
+                          <path d="M0 75h25v25H0zm3 18v19h19V78zm3 3h13v13H6z" fill="currentColor" />
+                          
+                          {/* 三处定位点（内角） */}
+                          <rect x="9" y="9" width="7" height="7" fill="currentColor" />
+                          <rect x="84" y="9" width="7" height="7" fill="currentColor" />
+                          <rect x="9" y="84" width="7" height="7" fill="currentColor" />
 
-                        {/* 几何风格的 QR 像素颗粒线条（表示包含用户信息） */}
-                        <path d="M30 4h5v5h-5zm0 10h10v5H30zm15-10h15v5H45zm5 10h5v8h-5zm10-5h5v5h-5zm-35 25h10v5H20zm15 5h5v5h-5zm5-5h10v5H40zm15 0h5v8h-5zm10-5h15v5H65zm-25 15h12v5H40zm20 5h5v5h-5zm10-5h5v10H70zm-45 15h15v5H25zm20 0h5v5h-5zm10-10h10v5H55zm15 5h10v5H70z" fill="currentColor" />
-                        <path d="M30 60h5v10h-5zm10 5h12v5H40zm15-5h5v5h-5zm5 10h10v5H60zm15-10h15v5H75zm0 15h5v5h-5z" fill="currentColor" />
-                        
-                        {/* 中间嵌入一个精致的 VIP 聚焦点 */}
-                        <rect x="42" y="42" width="16" height="16" rx="4" fill="#f59e0b" />
-                        <path d="M47 52l1.5-3 1.5 3h-3zm4 0l1.5-3 1.5 3h-3z" fill="#0f172a" />
-                      </svg>
+                          {/* 几何风格的 QR 像素颗粒线条（表示包含用户信息） */}
+                          <path d="M30 4h5v5h-5zm0 10h10v5H30zm15-10h15v5H45zm5 10h5v8h-5zm10-5h5v5h-5zm-35 25h10v5H20zm15 5h5v5h-5zm5-5h10v5H40zm15 0h5v8h-5zm10-5h15v5H65zm-25 15h12v5H40zm20 5h5v5h-5zm10-5h5v10H70zm-45 15h15v5H25zm20 0h5v5h-5zm10-10h10v5H55zm15 5h10v5H70z" fill="currentColor" />
+                          <path d="M30 60h5v10h-5zm10 5h12v5H40zm15-5h5v5h-5zm5 10h10v5H60zm15-10h15v5H75zm0 15h5v5h-5z" fill="currentColor" />
+                          
+                          {/* 中间嵌入一个精致的 VIP 聚焦点 */}
+                          <rect x="42" y="42" width="16" height="16" rx="4" fill="#f59e0b" />
+                          <path d="M47 52l1.5-3 1.5 3h-3zm4 0l1.5-3 1.5 3h-3z" fill="#0f172a" />
+                        </svg>
+                      )}
 
-                      {/* 二维码中心金色 LOGO 文字 */}
-                      <div className="absolute inset-0 m-auto w-8 h-8 rounded-full bg-slate-900 border border-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
-                        <Crown className="w-4 h-4 text-amber-400" />
-                      </div>
+                      {/* 二维码中心金色 LOGO 文字 (在使用默认 SVG 时显示) */}
+                      {!customQrUrl && (
+                        <div className="absolute inset-0 m-auto w-8 h-8 rounded-full bg-slate-900 border border-amber-500 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                          <Crown className="w-4 h-4 text-amber-400" />
+                        </div>
+                      )}
                     </div>
                     
-                    <div className="flex gap-4 text-slate-300 text-xs">
-                      <span className="flex items-center gap-1 font-bold">
-                        <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                        微信支付
-                      </span>
-                      <span className="text-slate-600">|</span>
-                      <span className="flex items-center gap-1 font-bold">
-                        <Smartphone className="w-3.5 h-3.5 text-sky-400" />
-                        支付宝扫码
-                      </span>
+                    <div className="flex flex-col items-center gap-2 w-full">
+                      <div className="flex gap-4 text-slate-300 text-xs items-center">
+                        <span className="flex items-center gap-1 font-bold">
+                          <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                          微信支付
+                        </span>
+                        <span className="text-slate-600">|</span>
+                        <span className="flex items-center gap-1 font-bold">
+                          <Smartphone className="w-3.5 h-3.5 text-sky-400" />
+                          支付宝扫码
+                        </span>
+                      </div>
+
+                      {/* 自定义替换的快捷配置入口 */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingQr(!isEditingQr);
+                          setTempQrUrl(customQrUrl);
+                        }}
+                        className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1.5 mt-1 font-bold bg-amber-500/5 hover:bg-amber-500/10 px-2.5 py-1.5 rounded-lg border border-amber-500/15 transition-all outline-none"
+                      >
+                        <Settings className="w-3.5 h-3.5 animate-spin duration-3000" />
+                        <span>⚙️ 替换收款通道 (服务配置)</span>
+                      </button>
                     </div>
                   </div>
+
+                  {/* 收款二维码可替换配置表单面板 */}
+                  {isEditingQr && (
+                    <div className="bg-slate-950/65 border border-amber-500/20 rounded-2xl p-4.5 space-y-4 shadow-inner" id="payment-qr-customizer-panel">
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                        <span className="text-xs font-black text-amber-400 flex items-center gap-1.5">
+                          <Settings className="w-3.5 h-3.5" />
+                          自定义收款码配置中心
+                        </span>
+                        <button 
+                          type="button"
+                          onClick={() => setIsEditingQr(false)}
+                          className="text-[10px] text-slate-500 hover:text-slate-300 hover:bg-white/5 px-2 py-0.5 rounded-md transition-all"
+                        >
+                          收起
+                        </button>
+                      </div>
+
+                      <div className="space-y-3.5">
+                        {/* 途径 1: 粘贴图片网络链接 */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-slate-400 block font-bold">
+                            方法一：输入自定义收款商户码 URL 链接：
+                          </label>
+                          <input
+                            type="text"
+                            value={tempQrUrl}
+                            onChange={(e) => setTempQrUrl(e.target.value)}
+                            placeholder="如: https://my-site.com/wechat-pay.jpg"
+                            className="w-full bg-slate-900 border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 font-mono transition-all"
+                          />
+                        </div>
+
+                        {/* 途径 2: 本地极速拖拽或多媒体选取 (转换为 base64) */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] text-slate-400 block font-bold">
+                            方法二：直接上传微信/支付宝收款码截图 (离线 Base64 编码保存)：
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <label className="flex-1 flex items-center justify-center gap-1.5 border border-dashed border-slate-700 hover:border-amber-500/40 rounded-xl py-2 px-3 bg-slate-900/40 hover:bg-slate-900 text-slate-300 hover:text-amber-400 cursor-pointer text-[10px] font-bold transition-all">
+                              <Upload className="w-3.5 h-3.5" />
+                              <span>选择本地收款码文件</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleLocalFileChange}
+                                className="hidden"
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        {tempQrUrl && (
+                          <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 flex items-center justify-between">
+                            <div className="truncate text-[9px] text-slate-400 font-mono pr-2">
+                              当前载入源: {tempQrUrl.startsWith('data:') ? '本地上传 Base64 二维码大文件' : tempQrUrl}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setTempQrUrl('')}
+                              className="text-[10px] text-rose-400 hover:text-rose-300 font-bold px-1.5 shrink-0"
+                            >
+                              清除
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomQrUrl('');
+                            setTempQrUrl('');
+                            localStorage.removeItem('custom_payment_qr');
+                            setIsEditingQr(false);
+                            setUpgradeError('');
+                          }}
+                          className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[10px] font-bold transition-all outline-none"
+                        >
+                          恢复系统默认
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomQrUrl(tempQrUrl);
+                            if (tempQrUrl.trim()) {
+                              localStorage.setItem('custom_payment_qr', tempQrUrl.trim());
+                            } else {
+                              localStorage.removeItem('custom_payment_qr');
+                            }
+                            setIsEditingQr(false);
+                            setUpgradeError('');
+                          }}
+                          className="flex-1 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl text-[10px] font-black tracking-wider transition-all outline-none shadow-md shadow-amber-500/10"
+                        >
+                          保存配置
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* 引导扫码友情备注 */}
                   <div className="bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-[10px] text-slate-400 space-y-1 text-center md:text-left">
