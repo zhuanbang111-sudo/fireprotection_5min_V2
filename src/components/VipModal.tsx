@@ -617,8 +617,8 @@ export const VipModal: React.FC<VipModalProps> = ({
                   {title}
                   <span className="text-[10px] uppercase font-bold tracking-widest bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded">PRO v2</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
-                  {description}
+                <p className="text-[10px] text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
+                  {description} • 年度授权方案
                 </p>
               </div>
 
@@ -764,9 +764,9 @@ export const VipModal: React.FC<VipModalProps> = ({
                 <div className="space-y-5">
                   {/* 金额展示区域 */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 text-center relative overflow-hidden">
-                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版终身授权费用</p>
+                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版年度授权费用</p>
                     <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 font-sans tracking-tight">
-                      ￥{price.toFixed(2)} 元
+                      ￥{price.toFixed(2)} / 年
                     </div>
                   </div>
 

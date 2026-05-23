@@ -307,11 +307,11 @@ apiApp.post('/auth/upgrade', async (c) => {
       .bind(expiresStr, tokenData.userId)
       .run();
 
-    console.log(`[D1 Auth Worker] 用户 VIP 已成功激活: ${user.email}`);
+    console.log(`[D1 Auth Worker] 用户 VIP 已成功激活(年度): ${user.email}`);
 
     return c.json({
       success: true,
-      message: '升级成功',
+      message: '升级成功(年度)',
       user: {
         uid: user.id,
         email: user.email,
@@ -324,6 +324,43 @@ apiApp.post('/auth/upgrade', async (c) => {
   } catch (error: any) {
     console.error('[D1 Auth Worker] 升级核心异常:', error);
     return c.json({ success: false, message: error.message || '激活失败' }, 500);
+  }
+});
+
+// 4.5. 超级管理员：获取全量用户列表 (用于管理面板)
+apiApp.get('/admin/users', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+    const isAdmin = user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim());
+    if (!isAdmin) {
+      return c.json({ success: false, message: '无管理员操作权限' }, 403);
+    }
+
+    const userData = await DB.prepare("SELECT id, email, displayName, vip_level, vip_expires_at, created_at FROM users").all();
+    const rows = userData.results || [];
+    
+    // 按注册时间倒序
+    const sortedUsers = [...rows].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return c.json({ success: true, users: sortedUsers });
+  } catch (e: any) {
+    return c.json({ success: false, message: e.message || '查询用户失败' }, 500);
   }
 });
 
@@ -638,14 +675,14 @@ apiApp.post('/orders/approve', async (c) => {
 
     if (status === 'success') {
       const expiration = new Date();
-      expiration.setFullYear(expiration.getFullYear() + 1); // 账期 1 年
+      expiration.setFullYear(expiration.getFullYear() + 1); // 账期 1 年 (Annual)
       const expiresStr = expiration.toISOString();
 
       await DB.prepare("UPDATE users SET vip_level = 'pro', vip_expires_at = ? WHERE id = ?")
         .bind(expiresStr, order.user_id)
         .run();
-      
-      console.log(`[Admin Action Worker] 订单审核通过，成功赋权: 用户=${order.email}, 到期时间=${expiresStr}`);
+        
+      console.log(`[Admin Action Worker] 订单审核通过，成功赋权(年度): 用户=${order.email}, 到期时间=${expiresStr}`);
     } else {
       console.log(`[Admin Action Worker] 订单审核拒绝/作废: ID=${orderId}, 申请者=${order.email}`);
     }

@@ -104,15 +104,47 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
   const [isConfigSaving, setIsConfigSaving] = useState(false);
 
   // 1.5. 系统配置数据绑定的价格
-  const [adminPrice, setAdminPrice] = useState<number>(399.00);
+  const [adminPrice, setAdminPrice] = useState<number>(399.00); // 用于输入框
+  const [currentPrice, setCurrentPrice] = useState<number>(399.00); // 用于展示当前云端价格
   const [isPriceSaving, setIsPriceSaving] = useState(false);
+
+  // 2. User management state
+  const [users, setUsers] = useState<any[]>([]);
+  const [isUsersLoading, setIsUsersLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<'orders' | 'users'>('orders');
+
+  // 获取用户列表
+  const fetchUsers = async () => {
+    setIsUsersLoading(true);
+    try {
+      const token = localStorage.getItem('fire_isochrone_auth_token');
+      const res = await axios.get('/api/admin/users', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data.success) {
+        setUsers(res.data.users || []);
+      }
+    } catch (e) {
+      console.error('[Admin] 获取用户列表出错:', e);
+    } finally {
+      setIsUsersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'users') {
+      fetchUsers();
+    }
+  }, [activeTab]);
 
   // 获取服务端的账单价格
   const fetchSystemPrice = async () => {
     try {
       const res = await axios.get('/api/system/price');
-      if (res.data.success && typeof res.data.price === 'number') {
-        setAdminPrice(res.data.price);
+      if (res.data.success) {
+        const p = typeof res.data.price === 'number' ? res.data.price : parseFloat(res.data.price);
+        setAdminPrice(p);
+        setCurrentPrice(p); // BUG FIX: Sync the showcase display
       }
     } catch (e) {
       console.error('[Admin] 获取服务端价格配置出错:', e);
@@ -139,6 +171,8 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
 
       if (res.data.success) {
         showToast(`🎉 全局 PRO 会员价格已更新为 ￥${adminPrice.toFixed(2)} 元！全体前台页面以及收银台将立即同步热部署更新！`, 'success');
+        // BUG FIX: Sync the price display immediately
+        fetchSystemPrice();
       } else {
         throw new Error(res.data.message || '保存价格失败');
       }
@@ -640,7 +674,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
               <div className="p-3.5 bg-amber-500/[0.03] border border-amber-500/15 rounded-2xl">
                 <p className="text-[11px] text-amber-800 leading-relaxed font-semibold">
                   <span className="font-sans font-bold text-amber-600">💡 动态价格逻辑：</span>
-                  管理员在此处设置的 PRO 会员授权价格（人民币，元）将被即时写入云端 D1 数据库。前台用户在点击「升级账户」拉起账单以及提交财务确认申请订单时，均会自动实时匹配此处设置的最新的金额标准！
+                  管理员在此处设置的 PRO 会员年度授权价格（人民币，元/年）将被即时写入云端 D1 数据库。前台用户在点击「升级账户」拉起账单时，均会自动实时匹配此处设置的最新的金额标准！
                 </p>
               </div>
 
@@ -653,10 +687,10 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                     step="0.01"
                     value={adminPrice}
                     onChange={(e) => setAdminPrice(parseFloat(e.target.value) || 0)}
-                    placeholder="请输入授权金额（例如 399.00）"
-                    className="w-full h-10 bg-slate-50 hover:bg-slate-100/50 border border-slate-250 rounded-xl pl-8 pr-12 text-xs font-black focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-900"
+                    placeholder="请输入年度授权金额（例如 38.00）"
+                    className="w-full h-10 bg-slate-50 hover:bg-slate-100/50 border border-slate-250 rounded-xl pl-8 pr-16 text-xs font-black focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-slate-900"
                   />
-                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold text-slate-450">元</span>
+                  <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[10px] font-mono font-bold text-slate-450">元/年</span>
                 </div>
 
                 <button
@@ -686,10 +720,10 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                 当前云端实时结算标价
               </span>
               <div className="text-3xl font-black text-slate-800 tracking-tight font-sans">
-                ￥{adminPrice.toFixed(2)}
+                ￥{currentPrice.toFixed(2)}
               </div>
               <span className="text-[9px] text-emerald-600 font-black bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full mt-2 uppercase tracking-wide">
-                ● 实时生效中
+                ● 实时生效中的年度方案
               </span>
             </div>
           </div>
@@ -702,225 +736,324 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
           <div className="p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-50/50">
             
             <div className="flex items-center gap-3">
-              <div className="relative max-w-xs w-full">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="搜索申请邮箱 / 转账人姓名..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full h-10 bg-white border border-slate-250 rounded-xl pl-9 pr-4 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400"
-                />
+              {/* Tab Switch */}
+              <div className="flex bg-slate-200/80 p-1 rounded-xl border border-slate-300/40 mr-4">
+                <button
+                  onClick={() => setActiveTab('orders')}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                    activeTab === 'orders' 
+                      ? 'bg-red-600 text-white shadow-md' 
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  订单流水
+                </button>
+                <button
+                  onClick={() => setActiveTab('users')}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all flex items-center gap-1.5 ${
+                    activeTab === 'users' 
+                      ? 'bg-red-600 text-white shadow-md' 
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  用户权限管理
+                </button>
               </div>
 
-              {/* Status Tabs */}
-              <div className="flex bg-slate-200/80 p-1 rounded-xl border border-slate-300/40">
-                <button
-                  onClick={() => setStatusFilter('pending')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    statusFilter === 'pending' 
-                      ? 'bg-amber-500 text-white shadow-sm' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  待审批 ({orders.filter(o => o.status === 'pending').length})
-                </button>
-                <button
-                  onClick={() => setStatusFilter('success')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    statusFilter === 'success' 
-                      ? 'bg-emerald-600 text-white shadow-sm' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  已放行 ({orders.filter(o => o.status === 'success').length})
-                </button>
-                <button
-                  onClick={() => setStatusFilter('rejected')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    statusFilter === 'rejected' 
-                      ? 'bg-rose-500 text-white shadow-sm' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  拒绝通过 ({orders.filter(o => o.status === 'rejected').length})
-                </button>
-                <button
-                  onClick={() => setStatusFilter('all')}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                    statusFilter === 'all' 
-                      ? 'bg-slate-800 text-white shadow-sm' 
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  总全量 ({orders.length})
-                </button>
-              </div>
+              {activeTab === 'orders' ? (
+                <>
+                  <div className="relative max-w-xs w-full">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="搜索申请邮箱 / 转账人姓名..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full h-10 bg-white border border-slate-250 rounded-xl pl-9 pr-4 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+
+                  {/* Status Tabs */}
+                  <div className="flex bg-slate-200/80 p-1 rounded-xl border border-slate-300/40">
+                    <button
+                      onClick={() => setStatusFilter('pending')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        statusFilter === 'pending' 
+                          ? 'bg-amber-500 text-white shadow-sm' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      待审批 ({orders.filter(o => o.status === 'pending').length})
+                    </button>
+                    <button
+                      onClick={() => setStatusFilter('success')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        statusFilter === 'success' 
+                          ? 'bg-emerald-600 text-white shadow-sm' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      已放行 ({orders.filter(o => o.status === 'success').length})
+                    </button>
+                    <button
+                      onClick={() => setStatusFilter('rejected')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                        statusFilter === 'rejected' 
+                          ? 'bg-rose-500 text-white shadow-sm' 
+                          : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      拒绝通过 ({orders.filter(o => o.status === 'rejected').length})
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs font-bold text-slate-500">
+                  共计 {users.length} 名全量注册用户
+                </div>
+              )}
             </div>
 
             <button
-              onClick={() => fetchOrders()}
-              disabled={isLoading}
+              onClick={() => activeTab === 'orders' ? fetchOrders() : fetchUsers()}
+              disabled={isLoading || isUsersLoading}
               className="px-4 h-10 bg-white hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-250 transition-all flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>刷新流水</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading || isUsersLoading ? 'animate-spin' : ''}`} />
+              <span>刷新{activeTab === 'orders' ? '流水' : '用户'}</span>
             </button>
           </div>
 
           {/* Table Area */}
           <div className="overflow-x-auto">
-            {isLoading ? (
-              <div className="py-24 text-center text-slate-400 text-xs font-semibold flex flex-col items-center justify-center gap-2">
-                <RefreshCw className="w-8 h-8 text-slate-400 animate-spin" />
-                <span>正在实时调取全局 D1 收单流水线，请稍候...</span>
-              </div>
-            ) : filteredOrders.length === 0 ? (
-              <div className="py-20 text-center text-slate-400 space-y-2">
-                <Database className="w-12 h-12 text-slate-300 mx-auto" />
-                <p className="text-xs font-bold">没有找到匹配此过滤器的账单信息</p>
-                <p className="text-[11px] text-slate-400">用户在收单中心提交凭证后，此处会触发秒级闪断通知。</p>
-              </div>
-            ) : (
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-150 bg-slate-100/40 text-slate-450 uppercase font-bold text-[10px] tracking-wider">
-                    <th className="py-3 px-5">账单号 / 创建时间</th>
-                    <th className="py-3 px-5">申请邮箱 (User ID)</th>
-                    <th className="py-3 px-5">核对信息 / 转账备注</th>
-                    <th className="py-3 px-5 text-right">拟定金额</th>
-                    <th className="py-3 px-5 text-center">截屏单据凭证</th>
-                    <th className="py-3 px-5 text-center">状态</th>
-                    <th className="py-3 px-5 text-right">快捷放行</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs">
-                  {filteredOrders.map((order, idx) => {
-                    const isPending = order.status === 'pending';
-                    
-                    return (
-                      <tr 
-                        key={`admin-order-${order.id}-${idx}`} 
-                        className={`hover:bg-slate-50/70 transition-colors ${
-                          isPending ? 'bg-amber-500/[0.01]' : ''
-                        }`}
-                      >
-                        {/* ID & Date */}
-                        <td className="py-4 px-5">
-                          <code className="text-[11px] font-black font-mono text-slate-800 block">
-                            {order.id}
-                          </code>
-                          <span className="text-[10px] text-slate-400 font-bold font-mono mt-1 block">
-                            {new Date(order.created_at).toLocaleString()}
-                          </span>
-                        </td>
+            {activeTab === 'orders' ? (
+              isLoading ? (
+                <div className="py-24 text-center text-slate-400 text-xs font-semibold flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-8 h-8 text-slate-400 animate-spin" />
+                  <span>正在实时调取全局 D1 收单流水线，请稍候...</span>
+                </div>
+              ) : filteredOrders.length === 0 ? (
+                <div className="py-20 text-center text-slate-400 space-y-2">
+                  <Database className="w-12 h-12 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold">没有找到匹配此过滤器的账单信息</p>
+                  <p className="text-[11px] text-slate-400">用户在收单中心提交凭证后，此处会触发秒级闪断通知。</p>
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-150 bg-slate-100/40 text-slate-450 uppercase font-bold text-[10px] tracking-wider">
+                      <th className="py-3 px-5">账单号 / 创建时间</th>
+                      <th className="py-3 px-5">申请邮箱 (User ID)</th>
+                      <th className="py-3 px-5">核对信息 / 转账备注</th>
+                      <th className="py-3 px-5 text-right">拟定金额</th>
+                      <th className="py-3 px-5 text-center">截屏单据凭证</th>
+                      <th className="py-3 px-5 text-center">状态</th>
+                      <th className="py-3 px-5 text-right">快捷放行</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {filteredOrders.map((order, idx) => {
+                      const isPending = order.status === 'pending';
+                      
+                      return (
+                        <tr 
+                          key={`admin-order-${order.id}-${idx}`} 
+                          className={`hover:bg-slate-50/70 transition-colors ${
+                            isPending ? 'bg-amber-500/[0.01]' : ''
+                          }`}
+                        >
+                          {/* ID & Date */}
+                          <td className="py-4 px-5">
+                            <code className="text-[11px] font-black font-mono text-slate-800 block">
+                              {order.id}
+                            </code>
+                            <span className="text-[10px] text-slate-400 font-bold font-mono mt-1 block">
+                              {new Date(order.created_at).toLocaleString()}
+                            </span>
+                          </td>
 
-                        {/* User Email & ID */}
-                        <td className="py-4 px-5">
-                          <div className="flex items-center gap-1.5">
-                            <Mail className="w-3.5 h-3.5 text-slate-405 shrink-0" />
-                            <span className="font-bold text-slate-700">{order.email}</span>
-                          </div>
-                          <span className="text-[9px] font-mono text-slate-400 mt-1 block max-w-[140px] truncate">
-                            UID: {order.user_id}
-                          </span>
-                        </td>
+                          {/* User Email & ID */}
+                          <td className="py-4 px-5">
+                            <div className="flex items-center gap-1.5">
+                              <Mail className="w-3.5 h-3.5 text-slate-405 shrink-0" />
+                              <span className="font-bold text-slate-700">{order.email}</span>
+                            </div>
+                            <span className="text-[9px] font-mono text-slate-400 mt-1 block max-w-[140px] truncate">
+                              UID: {order.user_id}
+                            </span>
+                          </td>
 
-                        {/* Account Verification Info */}
-                        <td className="py-4 px-5">
-                          <div className="space-y-1">
-                            <p className="font-semibold text-slate-700">
-                              通道: <span className="text-slate-900 border border-slate-200 px-1 py-0.5 rounded bg-slate-50 text-[10px] font-bold font-mono">{order.payment_method || '微信/支付宝'}</span>
-                            </p>
-                            <p className="text-[11px] text-slate-500">
-                              转账备注: <span className="text-amber-600 font-bold bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded text-[10px]">{order.voucher_name}</span>
-                            </p>
-                          </div>
-                        </td>
+                          {/* Account Verification Info */}
+                          <td className="py-4 px-5">
+                            <div className="space-y-1">
+                              <p className="font-semibold text-slate-700">
+                                通道: <span className="text-slate-900 border border-slate-200 px-1 py-0.5 rounded bg-slate-50 text-[10px] font-bold font-mono">{order.payment_method || '微信/支付宝'}</span>
+                              </p>
+                              <p className="text-[11px] text-slate-500">
+                                转账备注: <span className="text-amber-600 font-bold bg-amber-500/10 border border-amber-500/15 px-1.5 py-0.5 rounded text-[10px]">{order.voucher_name}</span>
+                              </p>
+                            </div>
+                          </td>
 
-                        {/* Amount */}
-                        <td className="py-4 px-5 text-right">
-                          <span className="font-mono text-xs font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-lg">
-                            ￥{order.amount ? order.amount.toFixed(2) : '399.00'}
-                          </span>
-                        </td>
+                          {/* Amount */}
+                          <td className="py-4 px-5 text-right">
+                            <span className="font-mono text-xs font-black text-slate-900 bg-slate-100 px-2 py-1 rounded-lg">
+                              ￥{order.amount ? order.amount.toFixed(2) : '399.00'}
+                            </span>
+                          </td>
 
-                        {/* Attachment Receipt Thumbnail */}
-                        <td className="py-4 px-5 text-center">
-                          {order.voucher_screenshot ? (
-                            <div className="relative inline-block group">
-                              <img
-                                src={order.voucher_screenshot}
-                                alt="Screenshot Receipt"
-                                className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer shadow-sm hover:scale-105 transition-all"
-                                onClick={() => setZoomImg(order.voucher_screenshot || null)}
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="absolute inset-0 bg-black/45 rounded-lg opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity">
-                                <Eye className="w-3 h-3 text-white" />
+                          {/* Attachment Receipt Thumbnail */}
+                          <td className="py-4 px-5 text-center">
+                            {order.voucher_screenshot ? (
+                              <div className="relative inline-block group">
+                                <img
+                                  src={order.voucher_screenshot}
+                                  alt="Screenshot Receipt"
+                                  className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer shadow-sm hover:scale-105 transition-all"
+                                  onClick={() => setZoomImg(order.voucher_screenshot || null)}
+                                  referrerPolicy="no-referrer"
+                                />
+                                <div className="absolute inset-0 bg-black/45 rounded-lg opacity-0 group-hover:opacity-100 flex items-center justify-center pointer-events-none transition-opacity">
+                                  <Eye className="w-3 h-3 text-white" />
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-slate-405 font-semibold">无图片单据</span>
-                          )}
-                        </td>
-
-                        {/* Status Label */}
-                        <td className="py-4 px-5 text-center">
-                          <span className={`px-2.5 py-1 rounded-full text-[9px] font-black border uppercase tracking-wider ${
-                            order.status === 'success' 
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-250/50'
-                              : order.status === 'rejected'
-                              ? 'bg-rose-50 text-rose-600 border-rose-200/50'
-                              : 'bg-amber-50 text-amber-700 border-amber-250/60 animate-pulse'
-                          }`}>
-                            {order.status === 'success' ? '已过账放行' : order.status === 'rejected' ? '拒绝通过' : '等待确收'}
-                          </span>
-                        </td>
-
-                        {/* Actions or Inline Verify Controls */}
-                        <td className="py-4 px-5 text-right whitespace-nowrap">
-                          {isPending ? (
-                            <div className="inline-flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setActiveConfirmAction({ order, status: 'rejected' })}
-                                className="w-7 h-7 bg-white hover:bg-rose-50 text-rose-500 hover:text-rose-650 border border-slate-200 hover:border-rose-200 rounded-lg transition-all flex items-center justify-center shadow-inner cursor-pointer"
-                                title="驳回作废单据"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                              
-                              <button
-                                type="button"
-                                onClick={() => setActiveConfirmAction({ order, status: 'success' })}
-                                className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black rounded-lg transition-all flex items-center justify-center gap-1 shadow-md shadow-emerald-900/10 cursor-pointer"
-                              >
-                                <Check className="w-3.5 h-3.5" />
-                                <span>确认过账</span>
-                              </button>
-                            </div>
-                          ) : (
-                            order.status === 'success' ? (
-                              <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
-                                已放行
-                              </span>
                             ) : (
-                              <span className="text-[10px] text-rose-500 font-bold bg-rose-50 px-2 py-1 rounded-md border border-rose-100">
-                                拒绝通过
-                              </span>
-                            )
-                          )}
-                        </td>
+                              <span className="text-[10px] text-slate-405 font-semibold">无图片单据</span>
+                            )}
+                          </td>
 
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          {/* Status Label */}
+                          <td className="py-4 px-5 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black border uppercase tracking-wider ${
+                              order.status === 'success' 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-250/50'
+                                : order.status === 'rejected'
+                                ? 'bg-rose-50 text-rose-600 border-rose-200/50'
+                                : 'bg-amber-50 text-amber-700 border-amber-250/60 animate-pulse'
+                            }`}>
+                              {order.status === 'success' ? '已过账放行' : order.status === 'rejected' ? '拒绝通过' : '等待确收'}
+                            </span>
+                          </td>
+
+                          {/* Actions or Inline Verify Controls */}
+                          <td className="py-4 px-5 text-right whitespace-nowrap">
+                            {isPending ? (
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveConfirmAction({ order, status: 'rejected' })}
+                                  className="w-7 h-7 bg-white hover:bg-rose-50 text-rose-500 hover:text-rose-650 border border-slate-200 hover:border-rose-200 rounded-lg transition-all flex items-center justify-center shadow-inner cursor-pointer"
+                                  title="驳回作废单据"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                                
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveConfirmAction({ order, status: 'success' })}
+                                  className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-black rounded-lg transition-all flex items-center justify-center gap-1 shadow-md shadow-emerald-900/10 cursor-pointer"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  <span>确认过账</span>
+                                </button>
+                              </div>
+                            ) : (
+                              order.status === 'success' ? (
+                                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-1 rounded-md border border-emerald-100">
+                                  已放行
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-rose-500 font-bold bg-rose-50 px-2 py-1 rounded-md border border-rose-100">
+                                  拒绝通过
+                                </span>
+                              )
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )
+            ) : (
+              // USERS TAB
+              isUsersLoading ? (
+                <div className="py-24 text-center text-slate-400 text-xs font-semibold flex flex-col items-center justify-center gap-2">
+                  <RefreshCw className="w-8 h-8 text-slate-400 animate-spin" />
+                  <span>正在实时同步 D1 云端用户权限数据...</span>
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-150 bg-slate-100/40 text-slate-450 uppercase font-bold text-[10px] tracking-wider">
+                      <th className="py-3 px-5">显示名称 / 唯一标识</th>
+                      <th className="py-3 px-5">电子邮箱</th>
+                      <th className="py-3 px-5">会员等级</th>
+                      <th className="py-3 px-5">到期时间</th>
+                      <th className="py-3 px-5 text-right">到期剩余时间</th>
+                      <th className="py-3 px-5 text-center">注册时间</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
+                    {users.map((u, i) => {
+                      const expiresAt = u.vip_expires_at ? new Date(u.vip_expires_at) : null;
+                      const now = new Date();
+                      let remainingDays = 0;
+                      if (expiresAt && expiresAt > now) {
+                        remainingDays = Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+                      }
+                      
+                      return (
+                        <tr key={`u-${u.id}-${i}`} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-4 px-5">
+                            <span className="font-bold text-slate-900 block">{u.displayName}</span>
+                            <code className="text-[9px] text-slate-400 font-mono italic">UID: {u.id}</code>
+                          </td>
+                          <td className="py-4 px-5 font-mono text-[11px]">{u.email}</td>
+                          <td className="py-4 px-5">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${
+                              u.vip_level === 'admin' 
+                                ? 'bg-red-50 text-red-600 border-red-200' 
+                                : u.vip_level === 'pro' 
+                                ? 'bg-emerald-50 text-emerald-600 border-emerald-200' 
+                                : 'bg-slate-50 text-slate-500 border-slate-200'
+                            }`}>
+                              {u.vip_level === 'admin' ? '总控管理员' : u.vip_level === 'pro' ? 'PRO 年度会员' : '免费版用户'}
+                            </span>
+                          </td>
+                          <td className="py-4 px-5 text-slate-500 font-mono">
+                            {u.vip_expires_at ? new Date(u.vip_expires_at).toLocaleDateString() : '--'}
+                          </td>
+                          <td className="py-4 px-5 text-right">
+                            {remainingDays > 0 ? (
+                              <div className="flex flex-col items-end">
+                                <span className="font-black text-emerald-600 text-xs">
+                                  即将到期剩余 {remainingDays} 天
+                                </span>
+                                <div className="w-20 h-1 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
+                                  <div 
+                                    className="h-full bg-emerald-500 rounded-full" 
+                                    style={{ width: `${Math.min(100, (remainingDays / 365) * 100)}%` }} 
+                                  />
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-300 italic">已过期 / 无期限</span>
+                            )}
+                          </td>
+                          <td className="py-4 px-5 text-center text-slate-400 font-mono text-[10px]">
+                            {new Date(u.created_at).toLocaleDateString()}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )
             )}
           </div>
-          
         </div>
 
       </main>
