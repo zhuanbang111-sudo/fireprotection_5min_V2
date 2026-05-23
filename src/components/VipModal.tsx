@@ -775,7 +775,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                     <div className="flex flex-col items-center justify-center space-y-4 bg-slate-950/40 p-4 shrink-0 rounded-3xl border border-white/5">
                       <div className="flex gap-4 w-full justify-center">
                         {/* 微信二维码 */}
-                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[220px]">
+                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[260px]">
                           <div className="relative p-2 bg-white rounded-2xl border-2 border-emerald-500/25 w-full aspect-square">
                             {customQrUrl ? (
                               <img 
@@ -797,7 +797,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                         </div>
 
                         {/* 支付宝二维码 */}
-                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[220px]">
+                        <div className="flex flex-col items-center space-y-2 flex-1 max-w-[260px]">
                           <div className="relative p-2 bg-white rounded-2xl border-2 border-sky-500/25 w-full aspect-square">
                             {customAlipayQrUrl ? (
                               <img 
