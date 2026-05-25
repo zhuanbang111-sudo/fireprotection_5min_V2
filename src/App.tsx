@@ -72,6 +72,7 @@ interface Station {
 
 // 定义分析结果数据结构接口
 interface AnalysisResult {
+  id?: string;          // 唯一标识符，防止 React 渲染 key 冲突
   station: Station;     // 原始站点信息
   geometry: any;        // Turf 生成的 GeoJSON 几何图形
   area: number;          // 覆盖面积 (平方公里)
@@ -765,12 +766,20 @@ export default function App() {
 
     // 【商业卡口一：多站点批量计算限制拦截】
     if (stations.length > 1 && !isVip) {
-      setVipModalTitle('🚨 批量计算专属 PRO 服务');
-      setVipModalDesc(`您当前加载了 ${stations.length} 个站点。免费试用账户仅支持“单点（1个站点）”依次进行等时圈精密测算，无法进行全自动多点批量循环。请联系客服升级为 PRO 付费专业版以解锁企业级多站点并行全自动算力！`);
-      setIsVipModalOpen(true);
-      addLog('⚠️ 批量测算拦截：免费用户单次仅支持单站点计算，多点批量已被拦截。');
-      return;
+      if (user && (user.vip_level === 'pro' || user.vip_level === 'admin')) {
+        // 如果是 pro 或 admin 账户，强制逻辑关闭该弹窗并继续分析流（重定向至分析流）
+        setIsVipModalOpen(false);
+      } else {
+        setVipModalTitle('🚨 批量计算专属 PRO 服务');
+        setVipModalDesc(`您当前加载了 ${stations.length} 个站点。免费试用账户仅支持“单点（1个站点）”依次进行等时圈精密测算，无法进行全自动多点批量循环。请联系客服升级为 PRO 付费专业版以解锁企业级多站点并行全自动算力！`);
+        setIsVipModalOpen(true);
+        addLog('⚠️ 批量测算拦截：免费用户单次仅支持单站点计算，多点批量已被拦截。');
+        return;
+      }
     }
+
+    // 启动分析时显式闭合任何开放中的会员结算收银台页面 (针对管理员账户或PRO账户)
+    setIsVipModalOpen(false);
 
     setIsAnalyzing(true); // 开启分析状态
     setIsPaused(false);
@@ -824,6 +833,7 @@ export default function App() {
         if (isoGeometry) {
           const area = turf.area(isoGeometry) / 1000000;
           const newResult: AnalysisResult = {
+            id: `res-${station.station_name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
             station: {
               ...station,
               lng: wgsOrigin[0],
@@ -1200,9 +1210,9 @@ export default function App() {
                         <span className="text-red-600">{coordSystem}</span>
                       </div>
                       <div className="flex p-1 bg-slate-100 rounded-lg">
-                        {(['GCJ-02', 'BD-09', 'WGS-84'] as const).map(sys => (
+                        {(['GCJ-02', 'BD-09', 'WGS-84'] as const).map((sys, idx) => (
                           <button
-                            key={sys}
+                            key={`coord-sys-${sys}-${idx}`}
                             onClick={() => setCoordSystem(sys)}
                             className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${
                               coordSystem === sys ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -1284,9 +1294,9 @@ export default function App() {
                       <span className="text-red-600 font-bold text-xs">{calibrationCoordSystem}</span>
                     </div>
                     <div className="flex p-1 bg-slate-100 rounded-lg">
-                      {(['GCJ-02', 'BD-09', 'WGS-84'] as const).map(sys => (
+                      {(['GCJ-02', 'BD-09', 'WGS-84'] as const).map((sys, idx) => (
                         <button
-                          key={sys}
+                          key={`calib-sys-${sys}-${idx}`}
                           onClick={() => setCalibrationCoordSystem(sys)}
                           className={`flex-1 py-1.5 text-[10px] font-bold rounded-md transition-all ${
                             calibrationCoordSystem === sys ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
@@ -1449,28 +1459,32 @@ export default function App() {
             <button 
               onClick={() => setActiveTab('map')}
               className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs font-bold transition-all ${
-                activeTab === 'map' ? 'bg-red-600 text-white shadow-lg' : 'text-slate-600 hover:bg-slate-100'
+                activeTab === 'map' 
+                  ? 'bg-slate-900 text-white shadow-lg' 
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <MapIcon className="w-3.5 h-3.5" />
-              地图预览
+              <MapIcon className="w-4 h-4" />
+              <span>地图图层</span>
             </button>
-            {/* 切换至统计报表按钮 */}
+
+            {/* 切换至报表视图按钮 */}
             <button 
               onClick={() => setActiveTab('stats')}
               className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs font-bold transition-all ${
-                activeTab === 'stats' ? 'bg-red-600 text-white shadow-lg' : 'text-slate-600 hover:bg-slate-100'
+                activeTab === 'stats' 
+                  ? 'bg-slate-900 text-white shadow-lg' 
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <FileText className="w-3.5 h-3.5" />
-              统计报表
+              <FileText className="w-4 h-4" />
+              <span>统计报表</span>
             </button>
           </div>
 
-          {/* 地图视图容器：使用 React-Leaflet 实现交互式地图 */}
+          {/* 地图图层视图 */}
           <div className={`flex-1 relative ${activeTab === 'map' ? 'block' : 'hidden'}`}>
             <MapContainer 
-              key={`map-${user?.uid || 'guest'}`}
               center={mapCenter} 
               zoom={13} 
               className="w-full h-full"
@@ -1511,39 +1525,42 @@ export default function App() {
                 </LayersControl.Overlay>
 
                 {/* 渲染分析结果：在地图上绘制站点图标和等时圈图形 */}
-                {results.map((res, i) => (
-                  <LayersControl.Overlay key={`result-overlay-${res.station.station_name}-${i}`} checked name={`${res.station.station_name} #${i + 1}`}>
-                    <LayerGroup>
-                      {/* 站点坐标标记 (Marker) */}
-                      <Marker 
-                        key={`marker-${res.station.station_name}-${i}`}
-                        position={[res.station.lat, res.station.lng]} 
-                        icon={fireIcon}
-                      >
-                        {/* 点击图标弹出的详细信息框 */}
-                        <Popup>
-                          <div className="p-1">
-                            <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
-                            <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
-                          </div>
-                        </Popup>
-                      </Marker>
-                      {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
-                      <GeoJSON 
-                        key={`iso-${res.station.station_name}-${i}-${res.timestamp}`}
-                        data={res.geometry} 
-                        style={{
-                          fillColor: '#ef4444', // 填充红色
-                          fillOpacity: 0.35,   // 稍微提高透明度增强对比
-                          color: '#b91c1c',     // 边框深红
-                          weight: 3,           // 加粗边框
-                          lineJoin: 'round',    // 圆角连接
-                          opacity: 0.8          // 边框不透明度
-                        }} 
-                      />
-                    </LayerGroup>
-                  </LayersControl.Overlay>
-                ))}
+                {results.map((res, i) => {
+                  const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
+                  return (
+                    <LayersControl.Overlay key={`result-overlay-${resId}`} checked name={`${res.station.station_name} #${i + 1}`}>
+                      <LayerGroup>
+                        {/* 站点坐标标记 (Marker) */}
+                        <Marker 
+                          key={`marker-${resId}`}
+                          position={[res.station.lat, res.station.lng]} 
+                          icon={fireIcon}
+                        >
+                          {/* 点击图标弹出的详细信息框 */}
+                          <Popup>
+                            <div className="p-1">
+                              <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
+                              <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
+                            </div>
+                          </Popup>
+                        </Marker>
+                        {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
+                        <GeoJSON 
+                          key={`iso-${resId}`}
+                          data={res.geometry} 
+                          style={{
+                            fillColor: '#ef4444', // 填充红色
+                            fillOpacity: 0.35,   // 稍微提高透明度增强对比
+                            color: '#b91c1c',     // 边框深红
+                            weight: 3,           // 加粗边框
+                            lineJoin: 'round',    // 圆角连接
+                            opacity: 0.8          // 边框不透明度
+                          }} 
+                        />
+                      </LayerGroup>
+                    </LayersControl.Overlay>
+                  );
+                })}
               </LayersControl>
 
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
@@ -1614,20 +1631,23 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {/* 循环结果数组并输出各行数据 */}
-                    {results.map((res, i) => (
-                      <tr key={`res-tr-${i}`} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-4 text-sm font-bold text-slate-700">{res.station.station_name}</td>
-                        <td className="px-6 py-4">
-                          {/* 覆盖面积徽章样式 */}
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-700">
-                            {res.area}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.poiCount}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.apiCalls}</td>
-                        <td className="px-6 py-4 text-sm text-slate-400">{res.timestamp}</td>
-                      </tr>
-                    ))}
+                    {results.map((res, i) => {
+                      const resId = res.id ? `${res.id}-${i}` : `res-table-${i}`;
+                      return (
+                        <tr key={`res-tr-${resId}`} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-6 py-4 text-sm font-bold text-slate-700">{res.station.station_name}</td>
+                          <td className="px-6 py-4">
+                            {/* 覆盖面积徽章样式 */}
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-700">
+                              {res.area}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.poiCount}</td>
+                          <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.apiCalls}</td>
+                          <td className="px-6 py-4 text-sm text-slate-400">{res.timestamp}</td>
+                        </tr>
+                      );
+                    })}
                     {/* 当没有结果时显示的空状态文案 */}
                     {results.length === 0 && (
                       <tr>

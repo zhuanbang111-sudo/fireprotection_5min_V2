@@ -172,6 +172,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
       if (res.data.success) {
         showToast(`🎉 全局 PRO 会员价格已更新为 ￥${adminPrice.toFixed(2)} 元！全体前台页面以及收银台将立即同步热部署更新！`, 'success');
         // BUG FIX: Sync the price display immediately
+        setCurrentPrice(adminPrice);
         fetchSystemPrice();
       } else {
         throw new Error(res.data.message || '保存价格失败');
@@ -990,9 +991,9 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
                     <tr className="border-b border-slate-150 bg-slate-100/40 text-slate-450 uppercase font-bold text-[10px] tracking-wider">
                       <th className="py-3 px-5">显示名称 / 唯一标识</th>
                       <th className="py-3 px-5">电子邮箱</th>
-                      <th className="py-3 px-5">会员等级</th>
-                      <th className="py-3 px-5">到期时间</th>
-                      <th className="py-3 px-5 text-right">到期剩余时间</th>
+                      <th className="py-3 px-5">会员类型</th>
+                      <th className="py-3 px-5">到期日期</th>
+                      <th className="py-3 px-5 text-right">剩余天数 / 状态</th>
                       <th className="py-3 px-5 text-center">注册时间</th>
                     </tr>
                   </thead>

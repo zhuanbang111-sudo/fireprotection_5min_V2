@@ -70,6 +70,24 @@ export const VipModal: React.FC<VipModalProps> = ({
   // 判断是否拥有全站超级管理员权限 (zhuanbang111@gmail.com, 714400040@qq.com, zhuanbang111@foxmail.com 或高级 Admin 标签)
   const isAdmin = user && (user.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user.email.toLowerCase().trim()));
 
+  // 判断是否拥有常规 PRO 授权
+  const isVip = React.useMemo(() => {
+    if (!user) return false;
+    if (user.isTrial) return false;
+    if (user.vip_level !== 'pro') return false;
+    if (user.vip_expires_at) {
+      try {
+        return new Date(user.vip_expires_at) > new Date();
+      } catch (e) {
+        return false;
+      }
+    }
+    return false;
+  }, [user]);
+
+  // 管理员和 PRO 均视为已拥有特权激活状态
+  const isUpgraded = isAdmin || isVip;
+
   // 获取服务端的全局收款码配置 (热更新)
   const fetchSystemQr = async () => {
     try {
@@ -162,9 +180,10 @@ export const VipModal: React.FC<VipModalProps> = ({
       setUpgradeError('');
       setVoucherName('');
       setVoucherScreenshot('');
-      setActiveTab('user');
+      // 如果拥有管理员特权，默认打开后台管理控制舱，绝不默认展示前台收款/收单页
+      setActiveTab(isAdmin ? 'admin' : 'user');
     }
-  }, [isOpen]);
+  }, [isOpen, isAdmin]);
 
   // 处理管理员本地替换上传 (Base64) - 微信
   const handleAdminLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -694,20 +713,32 @@ export const VipModal: React.FC<VipModalProps> = ({
               </div>
 
               {/* 底部动作区域 */}
-              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
-                <button
-                  onClick={onClose}
-                  className="w-full sm:w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all outline-none"
-                >
-                  保持免费使用
-                </button>
-                <button
-                  onClick={() => setShowPayment(true)}
-                  className="w-full sm:w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-slate-950 font-black text-xs hover:from-amber-400 hover:to-amber-500 shadow-lg shadow-amber-900/30 hover:shadow-amber-500/30 flex items-center justify-center gap-1.5 group transition-all"
-                >
-                  一键扫码 / 自主登记
-                  <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                </button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 w-full">
+                {isUpgraded ? (
+                  <button
+                    onClick={onClose}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 font-black text-xs hover:from-emerald-400 hover:to-teal-400 shadow-lg shadow-emerald-900/30 flex items-center justify-center gap-1.5 group transition-all"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-slate-950" />
+                    您已享有全部 PRO / 管理员 授权权限 (点击关闭)
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={onClose}
+                      className="w-full sm:w-1/3 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all outline-none"
+                    >
+                      保持免费使用
+                    </button>
+                    <button
+                      onClick={() => setShowPayment(true)}
+                      className="w-full sm:w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-slate-950 font-black text-xs hover:from-amber-400 hover:to-amber-500 shadow-lg shadow-amber-900/30 hover:shadow-amber-500/30 flex items-center justify-center gap-1.5 group transition-all"
+                    >
+                      一键扫码 / 自主登记
+                      <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  </>
+                )}
               </div>
             </>
           ) : (
@@ -764,7 +795,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                 <div className="space-y-5">
                   {/* 金额展示区域 */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 text-center relative overflow-hidden">
-                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版年度授权费用</p>
+                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版【年度】授权费用</p>
                     <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 font-sans tracking-tight">
                       ￥{price.toFixed(2)} / 年
                     </div>
