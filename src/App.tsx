@@ -1491,7 +1491,7 @@ export default function App() {
           </div>
 
           {/* 地图图层视图 */}
-          <div className={`flex-1 relative ${activeTab === 'map' ? 'block' : 'hidden'}`}>
+          <div className="flex-1 relative" style={{ display: activeTab === 'map' ? 'block' : 'none' }}>
             <MapContainer 
               center={mapCenter} 
               zoom={13} 
@@ -1533,41 +1533,43 @@ export default function App() {
                 </LayersControl.Overlay>
               </LayersControl>
 
-              {/* 渲染分析结果：在地图上直接绘制站点图标和等时圈图形 */}
-              {results.map((res, i) => {
-                const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
-                return (
-                  <LayerGroup key={`result-g-${resId}`}>
-                    {/* 站点坐标标记 (Marker) */}
-                    <Marker 
-                      key={`marker-${resId}`}
-                      position={[res.station.lat, res.station.lng]} 
-                      icon={fireIcon}
-                    >
-                      {/* 点击图标弹出的详细信息框 */}
-                      <Popup>
-                        <div className="p-1">
-                          <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
-                          <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
-                        </div>
-                      </Popup>
-                    </Marker>
-                    {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
-                    <GeoJSON 
-                      key={`iso-${resId}`}
-                      data={res.geometry} 
-                      style={{
-                        fillColor: '#ef4444', // 填充红色
-                        fillOpacity: 0.35,   // 稍微提高透明度增强对比
-                        color: '#b91c1c',     // 边框深红
-                        weight: 3,           // 加粗边框
-                        lineJoin: 'round',    // 圆角连接
-                        opacity: 0.8          // 边框不透明度
-                      }} 
-                    />
-                  </LayerGroup>
-                );
-              })}
+              {/* 渲染分析结果：在一个稳定的 LayerGroup 容器内在地图上直接绘制站点图标和等时圈图形 */}
+              <LayerGroup key="results-container-group">
+                {results.map((res, i) => {
+                  const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
+                  return (
+                    <LayerGroup key={`result-g-${resId}`}>
+                      {/* 站点坐标标记 (Marker) */}
+                      <Marker 
+                        key={`marker-${resId}`}
+                        position={[res.station.lat, res.station.lng]} 
+                        icon={fireIcon}
+                      >
+                        {/* 点击图标弹出的详细信息框 */}
+                        <Popup>
+                          <div className="p-1">
+                            <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
+                            <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
+                          </div>
+                        </Popup>
+                      </Marker>
+                      {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
+                      <GeoJSON 
+                        key={`iso-${resId}`}
+                        data={res.geometry} 
+                        style={{
+                          fillColor: '#ef4444', // 填充红色
+                          fillOpacity: 0.35,   // 稍微提高透明度增强对比
+                          color: '#b91c1c',     // 边框深红
+                          weight: 3,           // 加粗边框
+                          lineJoin: 'round',    // 圆角连接
+                          opacity: 0.8          // 边框不透明度
+                        }} 
+                      />
+                    </LayerGroup>
+                  );
+                })}
+              </LayerGroup>
 
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
               <MapUpdater center={mapCenter} /> {/* 当中心点状态改变时手动平移地图 */}
