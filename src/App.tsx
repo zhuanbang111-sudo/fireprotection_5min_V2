@@ -809,6 +809,7 @@ export default function App() {
 
       const station = stations[i];
       addLog(`📍 正在分析: ${station.station_name} (${i + 1}/${stations.length})`);
+      const stationStartTime = Date.now();
 
       try {
         // 请求后端仿真接口
@@ -850,9 +851,16 @@ export default function App() {
         } else {
           addLog(`⚠️ ${station.station_name} 无法生成等时圈`);
         }
+        
+        const stationEndTime = Date.now();
+        const durationSeconds = ((stationEndTime - stationStartTime) / 1000).toFixed(1);
+        addLog(`站点 ${station.station_name} 分析完成，耗时 ${durationSeconds} 秒`);
       } catch (error: any) {
         const errorMsg = error.response?.data?.message || error.message;
         addLog(`❌ ${station.station_name} 失败: ${errorMsg}`);
+        const stationEndTime = Date.now();
+        const durationSeconds = ((stationEndTime - stationStartTime) / 1000).toFixed(1);
+        addLog(`站点 ${station.station_name} 分析完成，耗时 ${durationSeconds} 秒`);
         if (error.response?.status === 403) {
           setAuthError(errorMsg);
           setIsAnalyzing(false);
@@ -1523,45 +1531,43 @@ export default function App() {
                     subdomains={['0', '1', '2', '3', '4', '5', '6', '7']}
                   />
                 </LayersControl.Overlay>
-
-                {/* 渲染分析结果：在地图上绘制站点图标和等时圈图形 */}
-                {results.map((res, i) => {
-                  const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
-                  return (
-                    <LayersControl.Overlay key={`result-overlay-${resId}`} checked name={`${res.station.station_name} #${i + 1}`}>
-                      <LayerGroup>
-                        {/* 站点坐标标记 (Marker) */}
-                        <Marker 
-                          key={`marker-${resId}`}
-                          position={[res.station.lat, res.station.lng]} 
-                          icon={fireIcon}
-                        >
-                          {/* 点击图标弹出的详细信息框 */}
-                          <Popup>
-                            <div className="p-1">
-                              <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
-                              <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
-                            </div>
-                          </Popup>
-                        </Marker>
-                        {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
-                        <GeoJSON 
-                          key={`iso-${resId}`}
-                          data={res.geometry} 
-                          style={{
-                            fillColor: '#ef4444', // 填充红色
-                            fillOpacity: 0.35,   // 稍微提高透明度增强对比
-                            color: '#b91c1c',     // 边框深红
-                            weight: 3,           // 加粗边框
-                            lineJoin: 'round',    // 圆角连接
-                            opacity: 0.8          // 边框不透明度
-                          }} 
-                        />
-                      </LayerGroup>
-                    </LayersControl.Overlay>
-                  );
-                })}
               </LayersControl>
+
+              {/* 渲染分析结果：在地图上直接绘制站点图标和等时圈图形 */}
+              {results.map((res, i) => {
+                const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
+                return (
+                  <LayerGroup key={`result-g-${resId}`}>
+                    {/* 站点坐标标记 (Marker) */}
+                    <Marker 
+                      key={`marker-${resId}`}
+                      position={[res.station.lat, res.station.lng]} 
+                      icon={fireIcon}
+                    >
+                      {/* 点击图标弹出的详细信息框 */}
+                      <Popup>
+                        <div className="p-1">
+                          <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
+                          <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                    {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
+                    <GeoJSON 
+                      key={`iso-${resId}`}
+                      data={res.geometry} 
+                      style={{
+                        fillColor: '#ef4444', // 填充红色
+                        fillOpacity: 0.35,   // 稍微提高透明度增强对比
+                        color: '#b91c1c',     // 边框深红
+                        weight: 3,           // 加粗边框
+                        lineJoin: 'round',    // 圆角连接
+                        opacity: 0.8          // 边框不透明度
+                      }} 
+                    />
+                  </LayerGroup>
+                );
+              })}
 
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
               <MapUpdater center={mapCenter} /> {/* 当中心点状态改变时手动平移地图 */}
