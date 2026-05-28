@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import crypto from 'node:crypto';
+import shpwrite from 'shp-write';
 
 type Bindings = {
   DB: any;
@@ -759,6 +760,74 @@ function bd09_to_gcj02(bd_lon: number, bd_lat: number) {
 }
 
 /**
+ * 依据 POI 的类别与名称特征进行归类分发
+ */
+function classifyPoi(poi: any): string {
+  const type = (poi.type || '').toLowerCase();
+  const name = (poi.name || '').toLowerCase();
+  
+  if (
+    type.includes('学校') || type.includes('幼儿园') || type.includes('小学') || 
+    type.includes('中学') || type.includes('大学') || type.includes('高等院校') || 
+    type.includes('培训') || type.includes('科研') || type.includes('教育') || 
+    name.includes('小学') || name.includes('中学') || name.includes('大学') || 
+    name.includes('幼儿园') || name.includes('学校')
+  ) {
+    return '学校';
+  }
+  
+  if (
+    type.includes('医院') || type.includes('诊所') || type.includes('医疗') || 
+    type.includes('急救') || type.includes('卫生院') || type.includes('药店') || 
+    type.includes('疾病预防') || name.includes('医院') || name.includes('诊所') || 
+    name.includes('康复中心') || name.includes('社区卫生')
+  ) {
+    return '医院';
+  }
+  
+  if (
+    type.includes('加油站') || type.includes('气站') || type.includes('加气站') || 
+    type.includes('充电站') || type.includes('加氢站') || name.includes('加油站') || 
+    name.includes('加气站') || name.includes('充电站')
+  ) {
+    return '加油站';
+  }
+  
+  if (
+    type.includes('政府') || type.includes('办事处') || type.includes('公安') || 
+    type.includes('派出所') || type.includes('税务') || type.includes('民政') || 
+    type.includes('公厕') || type.includes('垃圾转运') || type.includes('消防') || 
+    type.includes('居委会') || type.includes('公共服务') || type.includes('社会团体') || 
+    type.includes('大厅') || name.includes('政府') || name.includes('办事处') || 
+    name.includes('居委会') || name.includes('派出所') || name.includes('服务中心')
+  ) {
+    return '公共服务设施';
+  }
+  
+  if (
+    type.includes('住宅') || type.includes('小区') || type.includes('居民') || 
+    type.includes('生活区') || type.includes('公寓') || type.includes('新村') || 
+    type.includes('别墅') || type.includes('社区') || type.includes('家属院') || 
+    name.includes('小区') || name.includes('家园') || name.includes('公寓') || 
+    name.includes('住宅') || name.includes('花园') || name.includes('新村')
+  ) {
+    return '居民区';
+  }
+  
+  if (
+    type.includes('商场') || type.includes('百货') || type.includes('超市') || 
+    type.includes('购物') || type.includes('商业') || type.includes('市场') || 
+    type.includes('写字楼') || type.includes('步行街') || type.includes('专卖店') || 
+    name.includes('商场') || name.includes('购物中心') || name.includes('广场') || 
+    name.includes('百货') || name.includes('超市') || name.includes('写字楼')
+  ) {
+    return '商场';
+  }
+  
+  return '其他';
+}
+
+/**
  * ---【核心业务逻辑】分析与测算 ---
  */
 apiApp.post('/analyze', checkUsageLimit, async (c) => {
@@ -776,6 +845,7 @@ apiApp.post('/analyze', checkUsageLimit, async (c) => {
   const radius = Math.min(Math.floor(targetMin * 800 * 1.5), 7500);
   const trailPoints: [number, number, number][] = [];
   const anchors: string[] = [];
+  const poiMap = new Map<string, any>();
 
   // A.1 周边扫描 (使用 Fetch 替代 Axios)
   const aroundUrl = 'https://restapi.amap.com/v3/place/around';
@@ -785,7 +855,10 @@ apiApp.post('/analyze', checkUsageLimit, async (c) => {
       const res = await fetch(`${aroundUrl}?key=${key}&location=${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}&radius=${radius}&offset=50&page=${page}`);
       const data: any = await res.json();
       if (data.status === '1' && data.pois) {
-        data.pois.forEach((poi: any) => anchors.push(poi.location));
+        data.pois.forEach((poi: any) => {
+          poiMap.set(poi.location, poi);
+          anchors.push(poi.location);
+        });
         if (data.pois.length < 50) break;
       } else break;
     } catch (e) { break; }
@@ -801,7 +874,7 @@ apiApp.post('/analyze', checkUsageLimit, async (c) => {
     }
   }
 
-  const uniqueAnchors = Array.from(new Set(anchors)).slice(0, 120); // 限制点数确保 Workers 不会超时
+  const uniqueAnchors = Array.from(new Set(anchors)); // 去除 120 截取限制，实现全量测算
   const routeUrl = 'https://restapi.amap.com/v3/direction/driving';
 
   const routePromises = uniqueAnchors.map(async (destStr, idx) => {
@@ -836,24 +909,344 @@ apiApp.post('/analyze', checkUsageLimit, async (c) => {
         // 地块修正
         const [destLng, destLat] = destStr.split(',').map(Number);
         const gap = getDistance(lastLng, lastLat, destLng, destLat);
+        let finalTotalTime = accTime;
         if (gap > 5) {
           const entryTime = (gap / Math.max(0.1, Number(entrySpeed || 3.0))) + Number(entryPenalty || 0);
+          finalTotalTime = accTime + entryTime;
           const [wDestLng, wDestLat] = gcj02_to_wgs84(destLng, destLat);
-          trailPoints.push([wDestLng, wDestLat, accTime + entryTime]);
+          trailPoints.push([wDestLng, wDestLat, finalTotalTime]);
+        }
+
+        const targetSec = (targetMin * 60) / (factor || 0.8);
+        if (finalTotalTime <= targetSec && poiMap.has(destStr)) {
+          return poiMap.get(destStr);
         }
       }
     } catch (e) {}
+    return null;
   });
 
-  await Promise.all(routePromises);
+  const routeResults = await Promise.all(routePromises);
+  const reachedPois = routeResults.filter(Boolean);
+
+  const poiStats: Record<string, number> = {
+    '学校': 0,
+    '医院': 0,
+    '加油站': 0,
+    '公共服务设施': 0,
+    '居民区': 0,
+    '商场': 0,
+    '其他': 0
+  };
+
+  reachedPois.forEach((poi: any) => {
+    const cat = classifyPoi(poi);
+    poiStats[cat] = (poiStats[cat] || 0) + 1;
+  });
+
   const [wgsLng, wgsLat] = gcj02_to_wgs84(gcjLng, gcjLat);
 
   return c.json({
     trailPoints,
     anchorCount: uniqueAnchors.length,
+    poiStats,
+    apiCalls: uniqueAnchors.length + 10,
     wgsOrigin: [wgsLng, wgsLat],
     remaining: c.get('remaining')
   });
+});
+
+/**
+ * ---【标定计算拟合器】成果拟合模型 ---
+ */
+apiApp.post('/calibrate', checkUsageLimit, async (c) => {
+  try {
+    const body = await c.req.json();
+    const { apiKeys, samples, coordSystem } = body;
+    
+    if (!apiKeys || !samples || samples.length === 0) {
+      return c.json({ error: '缺少秘钥或样本数据' }, 400);
+    }
+
+    const routeUrl = 'https://restapi.amap.com/v3/direction/driving';
+    const results: any[] = [];
+
+    // 1. 数据预处理与原始行程获取
+    for (const sample of samples) {
+      let [sLng, sLat] = [sample.stationLng, sample.stationLat];
+      let [iLng, iLat] = [sample.incidentLng, sample.incidentLat];
+      
+      if (coordSystem === 'BD-09') {
+        [sLng, sLat] = bd09_to_gcj02(sLng, sLat);
+        [iLng, iLat] = bd09_to_gcj02(iLng, iLat);
+      } else if (coordSystem === 'WGS-84') {
+        [sLng, sLat] = wgs84_to_gcj02(sLng, sLat);
+        [iLng, iLat] = wgs84_to_gcj02(iLng, iLat);
+      }
+
+      const key = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+      try {
+        const res = await fetch(`${routeUrl}?key=${key}&origin=${sLng.toFixed(6)},${sLat.toFixed(6)}&destination=${iLng.toFixed(6)},${iLat.toFixed(6)}&strategy=13`);
+        const rData: any = await res.json();
+
+        if (rData.status === '1' && rData.route) {
+          const path = rData.route.paths[0];
+          let rawRoadTime = 0;
+          let lastLng = sLng, lastLat = sLat;
+
+          path.steps.forEach((step: any) => {
+            rawRoadTime += parseInt(step.duration);
+            const polyline = step.polyline.split(';');
+            const lastPoint = polyline[polyline.length - 1].split(',');
+            lastLng = Number(lastPoint[0]);
+            lastLat = Number(lastPoint[1]);
+          });
+
+          const gapDist = getDistance(lastLng, lastLat, iLng, iLat);
+          results.push({
+            rawRoadTime,
+            gapDist,
+            actualTotalTime: sample.actualTotalTime
+          });
+        }
+      } catch (e) {}
+    }
+
+    // 2. 网格搜索寻找最优解 (Grid Search + Physical Constraints + Penalty)
+    if (results.length === 0) {
+      return c.json({
+        recommendedFactor: 0.8,
+        recommendedEntrySpeed: 3.0,
+        averageErrorSeconds: 0,
+        sampleCount: 0,
+        message: '没有样本成功获取到路网路径，请检查 API Key 或坐标位置'
+      });
+    }
+
+    let bestFactor = 0.8;
+    let bestEntrySpeed = 3.0;
+    let minScore = Infinity;
+
+    for (let f = 0.4; f <= 1.2; f += 0.02) {
+      for (let s = 1.0; s <= 15.0; s += 0.5) {
+        const errors = results.map(item => {
+          const simTime = (item.rawRoadTime * f) + (item.gapDist / s);
+          return Math.abs(simTime - item.actualTotalTime);
+        });
+
+        errors.sort((a, b) => a - b);
+        const keepCount = Math.max(1, Math.floor(errors.length * 0.8));
+        const trimmedErrors = errors.slice(0, keepCount);
+        const avgError = trimmedErrors.reduce((sum, e) => sum + e, 0) / keepCount;
+
+        let penalty = 0;
+        if (f > 0.95) penalty += (f - 0.95) * 500;
+        if (s < 2.0) penalty += (2.0 - s) * 200;
+        
+        const currentScore = avgError + penalty;
+
+        if (currentScore < minScore) {
+          minScore = currentScore;
+          bestFactor = f;
+          bestEntrySpeed = s;
+        }
+      }
+    }
+
+    const finalErrors = results.map(item => {
+      const simTime = (item.rawRoadTime * bestFactor) + (item.gapDist / bestEntrySpeed);
+      return Math.abs(simTime - item.actualTotalTime);
+    });
+    finalErrors.sort((a, b) => a - b);
+    const finalAvgError = finalErrors.slice(0, Math.floor(finalErrors.length * 0.8)).reduce((a, b) => a + b, 0) / Math.max(1, Math.floor(finalErrors.length * 0.8));
+
+    return c.json({
+      recommendedFactor: Number(bestFactor.toFixed(2)),
+      recommendedEntrySpeed: Number(bestEntrySpeed.toFixed(2)),
+      averageErrorSeconds: Number(finalAvgError.toFixed(2)),
+      sampleCount: results.length,
+      trimmedCount: Math.floor(results.length * 0.2),
+      remaining: c.get('remaining')
+    });
+
+  } catch (error: any) {
+    return c.json({ error: '拟合计算失败: ' + error.message }, 500);
+  }
+});
+
+/**
+ * ---【导出研究成果】打包 Zip Shapefile ---
+ */
+apiApp.post('/export-shp', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { collection } = body;
+    if (!collection) {
+      return c.json({ success: false, message: '无效的研究数据要素' }, 400);
+    }
+
+    const zipArrayBuffer = await shpwrite.zip(collection);
+    
+    c.header('Content-Type', 'application/zip');
+    c.header('Content-Disposition', 'attachment; filename=fire_isochrones.zip');
+    return c.body(new Uint8Array(zipArrayBuffer));
+  } catch (error: any) {
+    console.error('[API SHP Export Exception]', error);
+    return c.json({ success: false, message: error.message || '后端生成 GIS Shapefile 失败' }, 500);
+  }
+});
+
+/**
+ * ---【历史分析记录缓存管理器】 ---
+ */
+
+// 1. 保存当前分析的所有站点结果到 D1 数据库
+apiApp.post('/history', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '请先登录账号后保存分析快照' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期，请重新登录' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+    const user = await DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '用户不存在' }, 401);
+    }
+
+    const body = await c.req.json();
+    const { name, stationsCount, results } = body;
+    if (!results || !Array.isArray(results)) {
+      return c.json({ success: false, message: '无效的分析结果数据，保存失败' }, 400);
+    }
+
+    const recordId = `rec_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    const defaultName = name || `覆盖仿真快照 - ${new Date().toLocaleDateString('zh-CN')} ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+
+    await DB.prepare("INSERT INTO analysis_records (id, user_id, record_name, stations_count, results_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(recordId, user.id, defaultName, stationsCount || results.length, JSON.stringify(results), createdAt)
+      .run();
+
+    console.log(`[History Worker] Account ${user.email} saved a new analysis snapshot: ${defaultName}`);
+    return c.json({ success: true, message: '分析保存成功！此后可在底端控制台查看历史分析成果并拉取。', recordId });
+  } catch (e: any) {
+    console.error('[History Save Exception]', e);
+    return c.json({ success: false, message: e.message || '系统繁忙，保存快照失败' }, 500);
+  }
+});
+
+// 2. 获取当前用户全部成果列表
+apiApp.get('/history', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问，请登录' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期，请重新登录' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const records = await DB.prepare("SELECT id, user_id, record_name, stations_count, created_at FROM analysis_records WHERE user_id = ?").bind(tokenData.userId).all();
+    const rawRecords = Array.isArray(records) ? records : ((records as any).results || []);
+    const sortedRecords = [...rawRecords].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    return c.json({ success: true, records: sortedRecords });
+  } catch (e: any) {
+    console.error('[History Fetch List Exception]', e);
+    return c.json({ success: false, message: e.message || '读取历史快照列表失败' }, 500);
+  }
+});
+
+// 3. 调阅特定成果详细信息
+apiApp.get('/history/:id', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问，请登录' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const recordId = c.req.param('id');
+    const record = await DB.prepare("SELECT * FROM analysis_records WHERE id = ?").bind(recordId).first();
+    if (!record) {
+      return c.json({ success: false, message: '该成果快照不存在' }, 404);
+    }
+
+    if (record.user_id !== tokenData.userId) {
+      return c.json({ success: false, message: '越权查看其他用户成果，操作被拒绝' }, 403);
+    }
+
+    return c.json({ 
+      success: true, 
+      record: {
+        id: record.id,
+        record_name: record.record_name,
+        stations_count: record.stations_count,
+        results: JSON.parse(record.results_json),
+        created_at: record.created_at
+      }
+    });
+  } catch (e: any) {
+    console.error('[History Record Detail Exception]', e);
+    return c.json({ success: false, message: e.message || '调阅详细快照成果失败' }, 500);
+  }
+});
+
+// 4. 删除特定的快照条目
+apiApp.delete('/history/:id', async (c) => {
+  try {
+    const authHeader = c.req.header('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return c.json({ success: false, message: '未授权访问，请登录' }, 401);
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return c.json({ success: false, message: '会话已过期' }, 401);
+    }
+    const DB = c.env.DB;
+    if (!DB) {
+      return c.json({ success: false, message: 'D1 数据库未绑定' }, 500);
+    }
+
+    const id = c.req.param('id');
+    const record = await DB.prepare("SELECT * FROM analysis_records WHERE id = ?").bind(id).first();
+    if (!record) {
+      return c.json({ success: false, message: '该分析备份不存在' }, 404);
+    }
+
+    if (record.user_id !== tokenData.userId) {
+      return c.json({ success: false, message: '无权删除他人成果备份' }, 403);
+    }
+
+    await DB.prepare("DELETE FROM analysis_records WHERE id = ?").bind(id).run();
+    return c.json({ success: true, message: '快照已成功删除。' });
+  } catch (e: any) {
+    console.error('[History Record Delete Exception]', e);
+    return c.json({ success: false, message: e.message || '删除快照成果失败' }, 500);
+  }
 });
 
 // Create top-level Hono app to bundle both api routes and SPA assets fallback
