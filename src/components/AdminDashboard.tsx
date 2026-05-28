@@ -456,8 +456,8 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
             </div>
             <div>
               <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wider">待审核款项笔数</p>
-              <h3 className="text-2xl font-black font-mono tracking-tight text-slate-900 mt-1">
-                {isLoading ? '...' : stats.pendingCount}
+              <h3 className="text-2xl font-black font-mono tracking-tight text-slate-900 mt-1 flex items-baseline">
+                <span>{isLoading ? '...' : stats.pendingCount}</span>
                 <span className="text-xs font-bold text-amber-600 ml-1">笔挂起</span>
               </h3>
             </div>
@@ -469,8 +469,8 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
             </div>
             <div>
               <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wider">成功结账笔数</p>
-              <h3 className="text-2xl font-black font-mono tracking-tight text-slate-900 mt-1">
-                {isLoading ? '...' : stats.successCount}
+              <h3 className="text-2xl font-black font-mono tracking-tight text-slate-900 mt-1 flex items-baseline">
+                <span>{isLoading ? '...' : stats.successCount}</span>
                 <span className="text-xs font-bold text-emerald-600 ml-1">笔已放行</span>
               </h3>
             </div>
@@ -483,7 +483,7 @@ export function AdminDashboard({ user, onBack, onLogout }: AdminDashboardProps) 
             <div>
               <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wider">平台纯收入（对账规模）</p>
               <h3 className="text-2xl font-black font-mono tracking-tight text-slate-900 mt-1">
-                ￥{isLoading ? '...' : stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <span>￥{isLoading ? '...' : stats.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </h3>
             </div>
           </div>

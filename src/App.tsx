@@ -1046,19 +1046,19 @@ export default function App() {
                   onClick={handleLogout}
                   className="text-[9px] text-slate-400 font-bold hover:text-red-500 transition-colors text-left uppercase tracking-tighter w-fit"
                 >
-                  Sign Out
+                  <span>Sign Out</span>
                 </button>
                 {(user?.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user?.email?.toLowerCase()?.trim() || '')) && (
                   <button
                     onClick={() => navigateTo('/admin')}
                     className="text-[9px] text-red-500 hover:text-red-600 font-black transition-colors uppercase tracking-tight flex items-center bg-red-50 border border-red-200/55 px-1.5 py-0.5 rounded ml-1.5 shadow-sm"
                   >
-                    👑 进入后台
+                    <span>👑 进入后台</span>
                   </button>
                 )}
                 {!user?.isTrial && user && isVip && vipExpiryDateStr && (
                   <span className="text-[8px] text-amber-600 font-bold font-mono">
-                    • 尊享效期至 {vipExpiryDateStr}
+                    • 尊享效期至 <span>{vipExpiryDateStr}</span>
                   </span>
                 )}
               </div>
@@ -1110,7 +1110,7 @@ export default function App() {
           >
             {/* 动态显示加载动画或播放图标 */}
             {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
-            {isAnalyzing ? '分析中...' : (isPaused ? '继续分析' : '开始分析')}
+            <span>{isAnalyzing ? '分析中...' : (isPaused ? '继续分析' : '开始分析')}</span>
           </button>
         </div>
       </header>
@@ -1127,14 +1127,14 @@ export default function App() {
                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-bold rounded-lg transition-all ${sidebarTab === 'analyze' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
               >
                 <FastForward className="w-4 h-4" />
-                分析
+                <span>分析</span>
               </button>
               <button 
                 onClick={() => setSidebarTab('calibrate')}
                 className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-bold rounded-lg transition-all ${sidebarTab === 'calibrate' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
               >
                 <Zap className="w-4 h-4" />
-                标定
+                <span>标定</span>
               </button>
             </div>
           </nav>
@@ -1194,9 +1194,11 @@ export default function App() {
                 </div>
                 
                 <p className={`text-[10px] font-medium leading-relaxed ${user.remaining === 1 ? 'text-red-700/80' : 'text-amber-700/70'}`}>
-                  {user.remaining === 1 
-                    ? '这是您当前的最后一次免费仿真。注册后即可解锁全部高级功能并消除次数限制。'
-                    : '当前处于试用装状态。完成所有分析后，您可以直接注册新账户以获取永久访问权限。'}
+                  <span>
+                    {user.remaining === 1 
+                      ? '这是您当前的最后一次免费仿真。注册后即可解锁全部高级功能并消除次数限制。'
+                      : '当前处于试用装状态。完成所有分析后，您可以直接注册新账户以获取永久访问权限。'}
+                  </span>
                 </p>
                 
                 <button 
@@ -1211,7 +1213,7 @@ export default function App() {
                   }`}
                 >
                   <LogIn size={14} />
-                  立即注册/登录账号
+                  <span>立即注册/登录账号</span>
                 </button>
               </motion.div>
             )}
@@ -1434,7 +1436,7 @@ export default function App() {
                     ) : (
                       <Calculator className="w-5 h-5" />
                     )}
-                    {isCalibrating ? '拟合计算中...' : '开始自动生成标定参数'}
+                    <span>{isCalibrating ? '拟合计算中...' : '开始自动生成标定参数'}</span>
                   </button>
 
                   {calibrationResult && (
@@ -1632,7 +1634,7 @@ export default function App() {
                     className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    导出 Excel
+                    <span>导出 Excel</span>
                   </button>
                   {/* 导出为 GIS 专用 Shapefile 按钮 */}
                   <button 
@@ -1641,7 +1643,7 @@ export default function App() {
                     className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-white rounded-lg text-xs font-bold hover:bg-slate-900 transition-all disabled:opacity-50"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    导出 SHP (WGS84)
+                    <span>导出 SHP (WGS84)</span>
                   </button>
                 </div>
               </div>
