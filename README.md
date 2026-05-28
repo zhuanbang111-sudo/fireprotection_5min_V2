@@ -72,17 +72,23 @@
 - **导出 SHP 文件**：默认为 WGS-84 地球标准坐标系。
 
 ## 🌐 部署与分享 (Cloudflare / Workers)
-本应用已适配 Cloudflare Workers + Assets 全栈部署模式。
+本应用已完全适配并全面调优 Cloudflare Workers + Pages/Assets 全栈边缘侧计算架构。
 
-1. **解锁环境变量**：
-   - 确保 `wrangler.json` 中配置了 `"main": "dist/worker.js"`。
-   - 在 Cloudflare 控制台的 **Settings > Variables** 中，你现在可以正常添加 `AMAP_KEYS` 等环境变量控制密钥了。
-2. **构建命令**：
-   - 使用 `npm run build` 生成 `dist` 目录。
-   - 使用 `npx wrangler deploy` 或在控制台上传 `dist` 文件夹。
-3. **重要提示**：
-   - 如果遇到 405 错误，请检查 `wrangler.json` 是否正确上传，它决定了 Cloudflare 是将应用视为“图片站”还是“全栈站”。
-   - 请在侧边栏填入您个人的高德 API Key。系统不会持久化存储您的秘钥。
+### 1. 构建与边缘端兼容性保障 (Edge Computation Compatibility)
+- **自定义 Assert 垫片 (Assert Shim)**：由于 GIS 领域的 `shp-write` 依赖于 Node.js 内置的 `assert` 断言模块，而在 Cloudflare Workers 生态下默认无原生运行时断言，我们特别在打包流程中引入了 `/src/assert-shim.js` 零依赖断言垫片。
+- **Esbuild 编译优化 (esbuild Alias Mapping)**：在 `package.json` 的 `build` 脚本中，通过配置 `--alias:assert=./src/assert-shim.js --alias:node:assert=./src/assert-shim.js`，无缝拦截了依赖调用，使其符合 Cloudflare Workers 无遗留打包和 100% 成功部署的标准。
+
+### 2. 部署操作指南
+1. **环境变量配置**：
+   - 确保 `wrangler.json` 中配置了正确的入口指向 `"main": "dist/worker.js"`。
+   - 部署完成后在 Cloudflare 仪表盘 **Wrangler / Workers > Settings > Variables** 中，可以填入您的定制化 `AMAP_KEYS` 与生产秘钥。
+2. **快速发布**：
+   - 运行项目构建：`npm run build`。该命令将同步执行 Vite 前端静态打包与 Worker 后端极速 esbuild 边缘环境多重编译，并生成 `dist` 目录。
+   - 执行边缘发布：使用 `npx wrangler deploy` 便可瞬间上云部署，秒级生效。
+
+### 3. 排障与重要提示
+- **405 错误排查**：如果请求后端出现 405，说明 `wrangler.json` 规则未正确跟随上传，Cloudflare Pages 将页面误读为纯静态资源站。请重新运行全流程部署。
+- **按键轮换与隔离**：用户可在前端界面、后端环境变量分别注入高德 API Key（系统不会明文公开或落地持久化用户自定义的临时私钥）。
 
 ## 许可证
 Apache-2.0

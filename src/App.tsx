@@ -233,8 +233,8 @@ export default function App() {
 
   // --- 商业及VIP特权追踪状态 ---
   const [isVipModalOpen, setIsVipModalOpen] = useState(false);
-  const [vipModalTitle, setVipModalTitle] = useState('解锁 PRO 专业版算力特权');
-  const [vipModalDesc, setVipModalDesc] = useState('您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心资产导出权限');
+  const [vipModalTitle, setVipModalTitle] = useState('解锁 PRO 专业版');
+  const [vipModalDesc, setVipModalDesc] = useState('您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心成果矢量文件导出权限');
 
   const isVip = useMemo(() => {
     if (!user) return false;
@@ -263,8 +263,8 @@ export default function App() {
   // --- 业务状态定义 ---
   const [apiKeys, setApiKeys] = useState<string>(''); // 用户输入的多个高德 API Key（用逗号隔开）
   const [stations, setStations] = useState<Station[]>([]); // 上传解析后的所有待分析站点列表
-  const [coordSystem, setCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('WGS-84'); // 上传数据的原始坐标系（默认设为 WGS-84，因为 GPS 数据最常见）
-  const [calibrationCoordSystem, setCalibrationCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('WGS-84'); // 标定数据的原始坐标系
+  const [coordSystem, setCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('GCJ-02'); // 上传数据的原始坐标系（默认设为 GCJ-02，因为 API数据使用的事高德地图的API服务）
+  const [calibrationCoordSystem, setCalibrationCoordSystem] = useState<'GCJ-02' | 'BD-09' | 'WGS-84'>('GCJ-02'); // 标定数据的原始坐标系
   const [targetMin, setTargetMin] = useState<number>(5); // 设定的目标到达时间（默认 5 分钟）
   const [factor, setFactor] = useState<number>(0.8); // 消防特权系数（车速补益，越小越快）
   const [walkSpeed, setWalkSpeed] = useState<number>(4.0); // 步行速度补偿（用于等时圈末端网格计算）
@@ -1012,7 +1012,7 @@ export default function App() {
     const actualName = customName.trim() || `成果备份_${Date.now()}`;
 
     try {
-      addLog('💾 正在打包并向 Cloudflare D1 数据库同步本次算力快照...');
+      addLog('💾 正在打包并向数据库同步本次运行结果...');
       const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
       const response = await axios.post('/api/history', {
         name: actualName,
@@ -1024,7 +1024,7 @@ export default function App() {
 
       if (response.data.success) {
         addLog(`✅ 空间要素同步成功！已归档入库：${actualName}`);
-        alert(response.data.message || '分析快照已成功持久化存储！');
+        alert(response.data.message || '分析成果已成功持久化存储！');
         fetchHistory(); // 刷新本地列表
       }
     } catch (e: any) {
@@ -1036,7 +1036,7 @@ export default function App() {
   // 回载覆盖历史记录
   const loadHistoryRecord = async (id: string) => {
     try {
-      addLog('📂 正在从 Cloudflare D1 调用历史矢量快照包...');
+      addLog('📂 正在从数据库调用历史矢量数据包...');
       const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
       const response = await axios.get(`/api/history/${id}`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
@@ -1061,7 +1061,7 @@ export default function App() {
   // 并网联合对比 (不覆盖现有结果，把历史成果增量并入当前要素大盘，进行可视化比对)
   const compareHistoryRecord = async (id: string) => {
     try {
-      addLog('📂 正在获取并网快照做对比...');
+      addLog('📂 正在获取历史数据做对比...');
       const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
       const response = await axios.get(`/api/history/${id}`, {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {}
@@ -1076,13 +1076,13 @@ export default function App() {
         
         data.results.forEach((histRes: any) => {
           // 如果名字不冲突，直接并入；如果冲突，加入 (对比) 前缀区分
-          const isDuplicate = results.some(r => r.station.station_name === histRes.station.station_name || r.station.station_name === `[历史D1] ${histRes.station.station_name}`);
+          const isDuplicate = results.some(r => r.station.station_name === histRes.station.station_name || r.station.station_name === `[历史分析数据] ${histRes.station.station_name}`);
           
           mergedResults.push({
             ...histRes,
             station: {
               ...histRes.station,
-              station_name: isDuplicate ? `[已并入] ${histRes.station.station_name}` : `[历史D1] ${histRes.station.station_name}`
+              station_name: isDuplicate ? `[已并入] ${histRes.station.station_name}` : `[历史分析数据] ${histRes.station.station_name}`
             }
           });
           mergeCount++;
@@ -1150,7 +1150,7 @@ export default function App() {
     // 【商业卡口二：GIS 矢量数据资产物理卡卡口】
     if (!isVip) {
       setVipModalTitle('🔒 导出 Shapefile 专属限制');
-      setVipModalDesc('由本引擎生成的具有精密拓扑坐标 of WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属的高阶资产保护文件。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
+      setVipModalDesc('由本引擎生成的具有精密拓扑坐标 of WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属功能。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
       setIsVipModalOpen(true);
       addLog('⚠️ 导出拦截：GIS 矢量资产导出（Shapefile）为 PRO 专业版专用功能，已被保护卡口拦截。');
       return;
@@ -1222,7 +1222,7 @@ export default function App() {
                 <StatusBadge 
                   user={user} 
                   onUpgradeClick={() => {
-                    setVipModalTitle('升级解锁 PRO 专业版算力特权');
+                    setVipModalTitle('升级解锁 PRO 专业版');
                     setVipModalDesc('升级您的账户以解锁无限量多站点并行批量运算、由于资产安全及核心隐私政策，标准 ArcGIS/QGIS 分层面要素 Shapefile（WGS84投影）为 PRO 专业版独享。');
                     setIsVipModalOpen(true);
                   }}
@@ -1245,7 +1245,7 @@ export default function App() {
                 )}
                 {!user?.isTrial && user && isVip && vipExpiryDateStr && (
                   <span className="text-[8px] text-amber-600 font-bold font-mono">
-                    • 尊享效期至 <span>{vipExpiryDateStr}</span>
+                    • 尊享有效期至 <span>{vipExpiryDateStr}</span>
                   </span>
                 )}
               </div>
