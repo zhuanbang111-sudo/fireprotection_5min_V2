@@ -27,6 +27,7 @@ interface AnalysisResult {
   geometry: any;
   area: number;
   poiCount: number;
+  poiStats?: Record<string, number>;
   apiCalls: number;
   timestamp: string;
 }
@@ -96,6 +97,30 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({ results, user }) =
       uniformityText,
       uniformityColor
     };
+  }, [results]);
+
+  // 计算本次分析所覆盖的各类重要 POI 累计总数
+  const poiCategoryTotals = useMemo(() => {
+    const totals = {
+      '学校': 0,
+      '医院': 0,
+      '加油站': 0,
+      '公共服务设施': 0,
+      '居民区': 0,
+      '商场': 0,
+      '其他': 0
+    };
+    results.forEach(r => {
+      if (r.poiStats) {
+        Object.keys(totals).forEach(key => {
+          const k = key as keyof typeof totals;
+          totals[k] += r.poiStats[k] || 0;
+        });
+      } else {
+        totals['其他'] += r.poiCount || 0;
+      }
+    });
+    return totals;
   }, [results]);
 
   // 2. 导出 PDF 报表 (专业 bilingual 结构，规避中文乱码的同时确保极高的视觉规格)
@@ -273,10 +298,10 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({ results, user }) =
     doc.text('SYSTEM ANALYSIS & REGULATION INSIGHTS', 15, finalY + 10);
 
     doc.setFillColor(254, 242, 242); // Soft warm red border-left card for safety alerts
-    doc.rect(15, finalY + 14, 180, 26, 'F');
+    doc.rect(15, finalY + 14, 180, 31, 'F');
     doc.setDrawColor(239, 68, 68);
     doc.setLineWidth(1);
-    doc.line(15, finalY + 14, 15, finalY + 40);
+    doc.line(15, finalY + 14, 15, finalY + 45);
 
     doc.setFont('Helvetica', 'bold');
     doc.setFontSize(8.5);
@@ -291,6 +316,11 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({ results, user }) =
     doc.text(`* Priority Intervention: The min coverage station "${stats.minAreaName}" has an active area of only ${stats.minArea} km2.`, 20, finalY + 29);
     doc.text(`  Consider optimizing road connectivity or re-aligning dispatch zones to expand its physical reach boundaries.`, 20, finalY + 33);
     doc.text(`* High Load Balancing: "${stats.maxPoiName}" monitors ${stats.maxPoi} critical POI anchors. Allocate higher contingency backup.`, 20, finalY + 37);
+    
+    // 增加各类型重要 POI 汇总数据行的 PDF 输出
+    const breakdownStr = `Schools: ${poiCategoryTotals['学校']} | Hospitals: ${poiCategoryTotals['医院']} | Gas Station: ${poiCategoryTotals['加油站']} | Public Serv: ${poiCategoryTotals['公共服务设施']} | Residentials: ${poiCategoryTotals['居民区']} | Malls: ${poiCategoryTotals['商场']} | Others: ${poiCategoryTotals['其他']}`;
+    doc.setFont('Helvetica', 'bold');
+    doc.text(`* POI Category Demographics Breakdown: ` + breakdownStr, 20, finalY + 41);
 
     // ---【第 7 部分：精致页脚】---
     doc.setDrawColor(241, 245, 249);
@@ -389,6 +419,61 @@ export const SummaryReport: React.FC<SummaryReportProps> = ({ results, user }) =
           </div>
           <div className="mt-3 text-[10px] text-slate-400 border-t border-slate-50 pt-2.5 truncate" title={stats.uniformityText}>
             {stats.uniformityText}
+          </div>
+        </div>
+      </div>
+
+      {/* 核心关注类别 POI 覆盖率及荷载分析区块 */}
+      <div className="bg-white border border-slate-150 rounded-2xl p-6 shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-5">
+          <div className="flex items-center gap-2">
+            <div className="w-1.5 h-4 bg-red-500 rounded" />
+            <h3 className="font-extrabold text-[#0f172a] text-xs uppercase tracking-wider">空间核心 POI 类别比重统计 (Critical POI Category Analysis)</h3>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono font-bold">ALL COVERED ANCHORS COUNT</span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-red-50/30 hover:border-red-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="school">🏫</span>
+            <span className="text-[10px] font-bold text-slate-400">学校 (Schools)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['学校']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-orange-50/30 hover:border-orange-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="hospital">🏥</span>
+            <span className="text-[10px] font-bold text-slate-400">医院 (Hospitals)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['医院']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-amber-50/30 hover:border-amber-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="gas">⛽</span>
+            <span className="text-[10px] font-bold text-slate-400">加油站 (Gas)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['加油站']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-blue-50/30 hover:border-blue-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="public">🏛️</span>
+            <span className="text-[10px] font-bold text-slate-400">公共设施 (Public)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['公共服务设施']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-emerald-50/30 hover:border-emerald-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="residential">🏘️</span>
+            <span className="text-[10px] font-bold text-slate-400">居民区 (Resident)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['居民区']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-purple-50/30 hover:border-purple-100 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="mall">🛍️</span>
+            <span className="text-[10px] font-bold text-slate-400">商场 (Malls)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['商场']}</span>
+          </div>
+
+          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 flex flex-col items-center justify-center text-center group hover:bg-slate-100 hover:border-slate-200 transition-all duration-300">
+            <span className="text-2xl mb-1.5" role="img" aria-label="other">🧩</span>
+            <span className="text-[10px] font-bold text-slate-400">其他 (Others)</span>
+            <span className="text-xl font-black text-slate-800 mt-1 font-mono">{poiCategoryTotals['其他']}</span>
           </div>
         </div>
       </div>

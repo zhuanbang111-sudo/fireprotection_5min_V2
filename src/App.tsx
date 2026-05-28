@@ -24,7 +24,11 @@ import {
   LogOut,         // 登出图标
   MessageSquare,  // 反馈图标
   Crown,          // Crown VIP图标
-  Gem             // Gem VIP图标
+  Gem,             // Gem VIP图标
+  Save,           // 保存图标
+  Trash,          // 垃圾箱图标
+  ArrowDownCircle,// 覆盖更新图标
+  Layers          // 图层对比图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
 import { MapContainer, TileLayer, useMap, LayersControl, ZoomControl } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
@@ -77,6 +81,7 @@ interface AnalysisResult {
   geometry: any;        // Turf 生成的 GeoJSON 几何图形
   area: number;          // 覆盖面积 (平方公里)
   poiCount: number;      // 使用的 POI 锚点数量
+  poiStats?: Record<string, number>; // 核心各类型 POI 数量统计
   apiCalls: number;      // 消耗的 API 调用次数
   timestamp: string;      // 分析完成的时间戳
 }
@@ -264,7 +269,8 @@ export default function App() {
   const [factor, setFactor] = useState<number>(0.8); // 消防特权系数（车速补益，越小越快）
   const [walkSpeed, setWalkSpeed] = useState<number>(4.0); // 步行速度补偿（用于等时圈末端网格计算）
   const [entrySpeed, setEntrySpeed] = useState<number>(3.0); // 地块内部行驶速度 (m/s)
-  const [sidebarTab, setSidebarTab] = useState<'analyze' | 'calibrate'>('analyze'); // 侧边栏当前选中的功能页
+  const [sidebarTab, setSidebarTab] = useState<'analyze' | 'calibrate' | 'history'>('analyze'); // 侧边栏当前选中的功能页
+  const [historyRecords, setHistoryRecords] = useState<any[]>([]); // 存储云端 D1 数据库历史分析记录
   const [isAnalyzing, setIsAnalyzing] = useState(false); // 当前是否正在执行分析任务
   const [isPaused, setIsPaused] = useState(false); // 当前是否处于暂停状态
   const pauseRef = useRef(false); // 用于中断循环的引用
@@ -891,7 +897,7 @@ export default function App() {
           setUser(prev => prev ? { ...prev, remaining: response.data.remaining } : null);
         }
 
-        const { trailPoints, anchorCount, apiCalls, wgsOrigin } = response.data;
+        const { trailPoints, anchorCount, apiCalls, wgsOrigin, poiStats } = response.data;
         const targetSec = (targetMin * 60) / factor;
         const isoGeometry = calculateIsochrone(trailPoints, targetSec);
 
@@ -907,6 +913,15 @@ export default function App() {
             geometry: isoGeometry,
             area: Number(area.toFixed(2)),
             poiCount: anchorCount,
+            poiStats: poiStats || {
+              '学校': 0,
+              '医院': 0,
+              '加油站': 0,
+              '公共服务设施': 0,
+              '居民区': 0,
+              '商场': 0,
+              '其他': 0
+            },
             apiCalls,
             timestamp: new Date().toLocaleString()
           };
@@ -959,12 +974,168 @@ export default function App() {
     addLog('🔄 分析已重置');
   };
 
+  // --- D1 数据库历史管理逻辑 ---
+
+  // 拉取用户的快照记录
+  const fetchHistory = async () => {
+    if (!user || user.isTrial) return;
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      const response = await axios.get('/api/history', {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      if (response.data.success) {
+        setHistoryRecords(response.data.records);
+      }
+    } catch (e) {
+      console.error('Fetch history records failed:', e);
+    }
+  };
+
+  // 保存当前结果到 Cloudflare D1 数据库中
+  const saveToHistory = async () => {
+    if (!user || user.isTrial) {
+      alert('🔒 该功能属于注册用户的云端高级管理服务，请登录账号后启用数据存盘。');
+      return;
+    }
+    if (results.length === 0) {
+      alert('当前等时圈分析大盘尚未产出任何成果，请测算出结果后再行同步！');
+      return;
+    }
+
+    const customName = window.prompt(
+      '请输入本次空间分析历史成果的自定义命名：', 
+      `成果备份_${new Date().toLocaleDateString('zh-CN')} ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`
+    );
+    if (customName === null) return; // cancel click
+
+    const actualName = customName.trim() || `成果备份_${Date.now()}`;
+
+    try {
+      addLog('💾 正在打包并向 Cloudflare D1 数据库同步本次算力快照...');
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      const response = await axios.post('/api/history', {
+        name: actualName,
+        stationsCount: results.length,
+        results: results
+      }, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (response.data.success) {
+        addLog(`✅ 空间要素同步成功！已归档入库：${actualName}`);
+        alert(response.data.message || '分析快照已成功持久化存储！');
+        fetchHistory(); // 刷新本地列表
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert(e.response?.data?.message || '云端同步快照失败，请重新登录账号或重试。');
+    }
+  };
+
+  // 回载覆盖历史记录
+  const loadHistoryRecord = async (id: string) => {
+    try {
+      addLog('📂 正在从 Cloudflare D1 调用历史矢量快照包...');
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      const response = await axios.get(`/api/history/${id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (response.data.success && response.data.record) {
+        const data = response.data.record;
+        setResults(data.results);
+        
+        // 同时同步填充站点列表，以便同步在底图与明细页同步反映
+        const loadedStations = data.results.map((r: any) => r.station);
+        setStations(loadedStations);
+
+        addLog(`✅ 快照【${data.record_name}】覆盖回载成功！共计 ${loadedStations.length} 个等时面已在地图和矩阵表中呈现。`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert('历史快照调取失败，请检查网络或重新登录。');
+    }
+  };
+
+  // 并网联合对比 (不覆盖现有结果，把历史成果增量并入当前要素大盘，进行可视化比对)
+  const compareHistoryRecord = async (id: string) => {
+    try {
+      addLog('📂 正在获取并网快照做对比...');
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      const response = await axios.get(`/api/history/${id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (response.data.success && response.data.record) {
+        const data = response.data.record;
+        
+        // 增量并入
+        const mergedResults = [...results];
+        let mergeCount = 0;
+        
+        data.results.forEach((histRes: any) => {
+          // 如果名字不冲突，直接并入；如果冲突，加入 (对比) 前缀区分
+          const isDuplicate = results.some(r => r.station.station_name === histRes.station.station_name || r.station.station_name === `[历史D1] ${histRes.station.station_name}`);
+          
+          mergedResults.push({
+            ...histRes,
+            station: {
+              ...histRes.station,
+              station_name: isDuplicate ? `[已并入] ${histRes.station.station_name}` : `[历史D1] ${histRes.station.station_name}`
+            }
+          });
+          mergeCount++;
+        });
+
+        // 重新设置 state
+        setResults(mergedResults);
+        setStations(mergedResults.map(r => r.station));
+        
+        addLog(`✅ 并网对比融合完毕！已从快照【${data.record_name}】中融合引入 ${mergeCount} 个要素点位面。您可以观察各规划圈范围进行对比。`);
+        setActiveTab('map'); // 自动切回地图切片，方便查看叠加覆盖详情
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert('调取并网快照失败。');
+    }
+  };
+
+  // 删除特定的成果归档
+  const deleteHistoryRecord = async (id: string, name: string) => {
+    if (!window.confirm(`⚠️ 您确定要永久删除云备份快照【${name}】吗？此操作将使该历史分析成果完全抹除并无法找回！`)) {
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
+      const response = await axios.delete(`/api/history/${id}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+
+      if (response.data.success) {
+        addLog(`🗑️ 已永久清除历史成果快照：${name}`);
+        fetchHistory(); // 刷新列表
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert('删除历史快照记录失败。');
+    }
+  };
+
   // 导出分析结果为 Excel 报表
   const exportCSV = () => {
     const data = results.map(r => ({
       '站点名称': r.station.station_name,
       '覆盖面积(km²)': r.area,
       'POI锚点数': r.poiCount,
+      '学校数': r.poiStats?.['学校'] || 0,
+      '医院数': r.poiStats?.['医院'] || 0,
+      '加油站数': r.poiStats?.['加油站'] || 0,
+      '公共服务设施数': r.poiStats?.['公共服务设施'] || 0,
+      '居民区数': r.poiStats?.['居民区'] || 0,
+      '商场数': r.poiStats?.['商场'] || 0,
+      '其他POI数': r.poiStats?.['其他'] || 0,
       'API消耗': r.apiCalls,
       '测算时刻': r.timestamp
     }));
@@ -975,11 +1146,11 @@ export default function App() {
   };
 
   // 导出分析结果为 GIS 专业的 Shapefile 格式 (WGS84 坐标系)
-  const exportSHP = () => {
+  const exportSHP = async () => {
     // 【商业卡口二：GIS 矢量数据资产物理卡卡口】
     if (!isVip) {
       setVipModalTitle('🔒 导出 Shapefile 专属限制');
-      setVipModalDesc('由本引擎生成的具有精密拓扑坐标的 WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属的高阶资产保护文件。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
+      setVipModalDesc('由本引擎生成的具有精密拓扑坐标 of WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属的高阶资产保护文件。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
       setIsVipModalOpen(true);
       addLog('⚠️ 导出拦截：GIS 矢量资产导出（Shapefile）为 PRO 专业版专用功能，已被保护卡口拦截。');
       return;
@@ -994,12 +1165,28 @@ export default function App() {
       }
     })));
     
-    // 使用 shp-write 库直接在浏览器端打包并下载 SHP 压缩包
-    // @ts-ignore
-    shpwrite.download(collection, {
-      folder: 'fire_isochrones',
-      filename: 'fire_isochrones'
-    });
+    try {
+      addLog('📦 正在请求后端打包 WGS84 矢量 Shapefile 文件...');
+      
+      const response = await axios.post('/api/export-shp', { collection }, {
+        responseType: 'blob'
+      });
+      
+      const blob = new Blob([response.data], { type: 'application/zip' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `fire_isochrones_${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      addLog('✅ Shapefile 矢量资源包已成功下载！');
+    } catch (e: any) {
+      console.error(e);
+      addLog('❌ 导出 Shapefile 失败，请检查网络或后端服务');
+    }
   };
 
   return (
@@ -1119,22 +1306,32 @@ export default function App() {
       <main className="flex-1 flex overflow-hidden">
         {/* 左侧边栏：用于参数控制和数据上传 */}
         <aside className="w-80 bg-white border-r border-slate-200 overflow-y-auto flex flex-col shrink-0">
-          {/* 功能切换导航（分析 vs 标定） */}
+          {/* 功能切换导航（分析 vs 标定 vs D1历史） */}
           <nav className="p-4 border-b border-slate-200">
-            <div className="flex gap-4">
+            <div className="flex gap-2">
               <button 
                 onClick={() => setSidebarTab('analyze')}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-bold rounded-lg transition-all ${sidebarTab === 'analyze' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${sidebarTab === 'analyze' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
               >
-                <FastForward className="w-4 h-4" />
+                <FastForward className="w-3.5 h-3.5" />
                 <span>分析</span>
               </button>
               <button 
                 onClick={() => setSidebarTab('calibrate')}
-                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 text-sm font-bold rounded-lg transition-all ${sidebarTab === 'calibrate' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${sidebarTab === 'calibrate' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
               >
-                <Zap className="w-4 h-4" />
+                <Zap className="w-3.5 h-3.5" />
                 <span>标定</span>
+              </button>
+              <button 
+                onClick={() => {
+                  setSidebarTab('history');
+                  fetchHistory();
+                }}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-lg transition-all ${sidebarTab === 'history' ? 'bg-red-50 text-red-700' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>历史(D1)</span>
               </button>
             </div>
           </nav>
@@ -1219,7 +1416,7 @@ export default function App() {
             )}
             
             {/* 根据当前选中的 sidebarTab 渲染不同的面板 */}
-            {sidebarTab === 'analyze' ? (
+            {sidebarTab === 'analyze' && (
               <>
                 {/* 1. API Key 配置区 */}
                 <section className="space-y-3">
@@ -1339,7 +1536,9 @@ export default function App() {
                   </div>
                 </section>
               </>
-            ) : (
+            )}
+
+            {sidebarTab === 'calibrate' && (
               // 标定面板内容：用于寻找最优数学参数
               <div className="space-y-8 animate-in fade-in duration-300">
                 <section className="space-y-4">
@@ -1507,6 +1706,106 @@ export default function App() {
 
               </div>
             )}
+
+            {sidebarTab === 'history' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <section className="space-y-4">
+                  <div className="flex items-center gap-2 text-slate-800 font-bold">
+                    <Save className="w-4 h-4 text-emerald-600" />
+                    <span>D1 数据库历史成果</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 leading-relaxed leading-5">
+                    云端 D1 数据库提供了跨终端、多版本的数据自动管理。您可以从下方列表自由拉取对比、删除或在地图中一键重新载入。
+                  </p>
+                </section>
+
+                {(!user || user.isTrial) ? (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
+                    <p className="text-xs text-amber-700 font-medium leading-relaxed">
+                      ⚠️ 历史大盘对比需要登录正式账号方能启用云存储保存和回载分析成果。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* 一键保存当前分析 */}
+                    <button
+                      onClick={saveToHistory}
+                      disabled={results.length === 0}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 shadow-sm"
+                    >
+                      <Save className="w-4 h-4" />
+                      <span>保存当前大盘至 D1 数据库</span>
+                    </button>
+
+                    <div className="h-px bg-slate-100 my-4" />
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        快照备份列表 ({historyRecords.length})
+                      </span>
+                      <button 
+                        onClick={fetchHistory}
+                        className="text-[10px] text-red-600 hover:underline font-bold"
+                      >
+                        刷新列表
+                      </button>
+                    </div>
+
+                    {historyRecords.length === 0 ? (
+                      <div className="text-center py-8 text-xs text-slate-400 font-medium bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                        暂无历史快照，试着点击上方按钮保存当前工作成果区。
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                        {historyRecords.map((rec) => (
+                          <div 
+                            key={rec.id} 
+                            className="p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl flex flex-col gap-2 transition-all relative group shadow-sm"
+                          >
+                            <div className="flex justify-between items-start">
+                              <div className="font-extrabold text-xs text-slate-800 break-all leading-relaxed max-w-[85%]">
+                                {rec.record_name}
+                              </div>
+                              <button 
+                                onClick={() => deleteHistoryRecord(rec.id, rec.record_name)}
+                                className="text-slate-400 hover:text-red-500 p-0.5 rounded transition-all opacity-0 group-hover:opacity-100"
+                                title="删除此备份"
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 font-medium pt-1">
+                              <span>{rec.stations_count} 个等时线面</span>
+                              <span className="font-mono text-[9px]">
+                                {new Date(rec.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 mt-1">
+                              <button
+                                onClick={() => loadHistoryRecord(rec.id)}
+                                className="py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] text-slate-600 font-bold flex items-center justify-center gap-1 shadow-sm transition-all"
+                              >
+                                <ArrowDownCircle className="w-3 h-3 text-red-600" />
+                                <span>覆盖回载</span>
+                              </button>
+                              <button
+                                onClick={() => compareHistoryRecord(rec.id)}
+                                className="py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-[10px] text-slate-600 font-bold flex items-center justify-center gap-1 shadow-sm transition-all"
+                              >
+                                <Layers className="w-3 h-3 text-emerald-600" />
+                                <span>并网对比</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 运行日志显示区域：固定在左侧边栏最底部 */}
@@ -1645,6 +1944,17 @@ export default function App() {
                     <Download className="w-3.5 h-3.5" />
                     <span>导出 SHP (WGS84)</span>
                   </button>
+                  {/* 保存大盘快照到 D1 数据库按钮 */}
+                  {user && !user.isTrial && (
+                    <button 
+                      onClick={saveToHistory}
+                      disabled={results.length === 0}
+                      className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-sm"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      <span>保存大盘快照 (D1)</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1681,7 +1991,19 @@ export default function App() {
                               {res.area}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.poiCount}</td>
+                          <td className="px-6 py-4 text-sm text-slate-500 font-mono">
+                            <span className="font-extrabold text-[#0f172a]">{res.poiCount}</span>
+                            {res.poiStats && (
+                              <div className="text-[10px] text-slate-400 mt-1.5 flex flex-wrap gap-1.5 max-w-xs">
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="学校">🏫 学校: {res.poiStats['学校'] || 0}</span>
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="医院">🏥 医院: {res.poiStats['医院'] || 0}</span>
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="加油站">⛽ 加油站: {res.poiStats['加油站'] || 0}</span>
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="公共设施">🏛️ 公共: {res.poiStats['公共服务设施'] || 0}</span>
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="居民区">🏘️ 住宅: {res.poiStats['居民区'] || 0}</span>
+                                <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-sm" title="商场">🛍️ 商场: {res.poiStats['商场'] || 0}</span>
+                              </div>
+                            )}
+                          </td>
                           <td className="px-6 py-4 text-sm text-slate-500 font-mono">{res.apiCalls}</td>
                           <td className="px-6 py-4 text-sm text-slate-400">{res.timestamp}</td>
                         </tr>

@@ -6,6 +6,8 @@ import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览�
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
 import crypto from 'crypto';
+import shpwrite from 'shp-write';
+
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
 
@@ -256,6 +258,33 @@ class D1PreparedStatement {
       }
       return orders;
     }
+
+    if (tableWord === 'analysis_records') {
+      const records = await loadTable('analysis_records');
+      if (sqlUpper.includes('INSERT INTO')) {
+        const [id, user_id, record_name, stations_count, results_json, created_at] = this.params;
+        const newRecord = { id, user_id, record_name, stations_count, results_json, created_at };
+        records.push(newRecord);
+        await saveTable('analysis_records', records);
+        return [newRecord];
+      }
+      if (sqlUpper.includes('WHERE ID =')) {
+        const id = this.params[0];
+        return records.filter((r: any) => r.id === id);
+      }
+      if (sqlUpper.includes('WHERE USER_ID =')) {
+        const userId = this.params[0];
+        return records.filter((r: any) => r.user_id === userId);
+      }
+      if (sqlUpper.includes('DELETE FROM')) {
+        const id = this.params[0];
+        const updated = records.filter((r: any) => r.id !== id);
+        await saveTable('analysis_records', updated);
+        return [];
+      }
+      return records;
+    }
+
 
     return [];
   }
@@ -821,7 +850,163 @@ apiRouter.post('/orders/approve', async (req, res) => {
   }
 });
 
+// ---【GIS 矢量 Shapefile 后端流式打包下载接口】---
+apiRouter.post('/export-shp', async (req, res) => {
+  try {
+    const { collection } = req.body;
+    if (!collection) {
+      return res.status(400).json({ success: false, message: '无效的研究数据要素' });
+    }
+
+    // 调用 shpwrite.zip 直接生成标准的 Zip 压缩二进制流
+    const zipArrayBuffer = await shpwrite.zip(collection);
+    
+    // 强制下发 zip 下载属性头部，彻底消灭前端 JSZip / Buffer 缺少 polyfill 的编译问题
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename=fire_isochrones.zip');
+    res.send(Buffer.from(zipArrayBuffer));
+  } catch (error: any) {
+    console.error('[API SHP Export] Error generating Shapefile package:', error);
+    res.status(500).json({ success: false, message: error.message || '后端生成 GIS Shapefile 失败' });
+  }
+});
+
+// ---【D1 历史分析快照存取/对比接口 (History Version Controller)】---
+
+// 1. 保存当前分析的所有站点结果到 D1 数据库
+apiRouter.post('/history', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '请先登录账号后保存分析快照' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期，请重新登录' });
+    }
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(tokenData.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+
+    const { name, stationsCount, results } = req.body;
+    if (!results || !Array.isArray(results)) {
+      return res.status(400).json({ success: false, message: '无效的分析结果数据，保存失败' });
+    }
+
+    const recordId = `rec_${crypto.randomBytes(8).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    const defaultName = name || `覆盖仿真快照 - ${new Date().toLocaleDateString('zh-CN')} ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+
+    await env.DB.prepare("INSERT INTO analysis_records (id, user_id, record_name, stations_count, results_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(recordId, user.id, defaultName, stationsCount || results.length, JSON.stringify(results), createdAt)
+      .run();
+
+    console.log(`[History] Account ${user.email} saved a new analysis snapshot: ${defaultName}`);
+    res.json({ success: true, message: '分析保存成功！此后可在底端控制台查看历史分析成果并拉取。', recordId });
+  } catch (e: any) {
+    console.error('[History Save Exception]', e);
+    res.status(500).json({ success: false, message: e.message || '系统繁忙，保存快照失败' });
+  }
+});
+
+// 2. 获取该账户名下的历史快照列表 (轻量，不包含 details JSON 字串以节省带宽)
+apiRouter.get('/history', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问，请登录' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期，请重新登录' });
+    }
+    
+    const records = await env.DB.prepare("SELECT id, user_id, record_name, stations_count, created_at FROM analysis_records WHERE user_id = ?").bind(tokenData.userId).all();
+    const rawRecords = Array.isArray(records) ? records : ((records as any).results || []);
+    const sortedRecords = [...rawRecords].sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    res.json({ success: true, records: sortedRecords });
+  } catch (e: any) {
+    console.error('[History Fetch Exception]', e);
+    res.status(500).json({ success: false, message: e.message || '读取历史快照列表失败' });
+  }
+});
+
+// 3. 调阅历史大盘记录并回载详细空间等时面 Geojson
+apiRouter.get('/history/:id', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问，请登录' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+
+    const { id } = req.params;
+    const record = await env.DB.prepare("SELECT * FROM analysis_records WHERE id = ?").bind(id).first();
+    if (!record) {
+      return res.status(404).json({ success: false, message: '该成果快照不存在' });
+    }
+
+    if (record.user_id !== tokenData.userId) {
+      return res.status(403).json({ success: false, message: '越权查看其他用户成果，操作被拒绝' });
+    }
+
+    res.json({ 
+      success: true, 
+      record: {
+        id: record.id,
+        record_name: record.record_name,
+        stations_count: record.stations_count,
+        results: JSON.parse(record.results_json),
+        created_at: record.created_at
+      }
+    });
+  } catch (e: any) {
+    console.error('[History Detail Exception]', e);
+    res.status(500).json({ success: false, message: e.message || '调阅详细快照成果失败' });
+  }
+});
+
+// 4. 删除特定的快照条目
+apiRouter.delete('/history/:id', async (req, res) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ success: false, message: '未授权访问，请登录' });
+    }
+    const token = authHeader.split(' ')[1];
+    const tokenData = verifyToken(token);
+    if (!tokenData) {
+      return res.status(401).json({ success: false, message: '会话已过期' });
+    }
+
+    const { id } = req.params;
+    const record = await env.DB.prepare("SELECT * FROM analysis_records WHERE id = ?").bind(id).first();
+    if (!record) {
+      return res.status(404).json({ success: false, message: '该分析备份不存在' });
+    }
+
+    if (record.user_id !== tokenData.userId) {
+      return res.status(403).json({ success: false, message: '无权删除他人成果备份' });
+    }
+
+    await env.DB.prepare("DELETE FROM analysis_records WHERE id = ?").bind(id).run();
+    res.json({ success: true, message: '快照已成功删除。' });
+  } catch (e: any) {
+    console.error('[History Delete Exception]', e);
+    res.status(500).json({ success: false, message: e.message || '删除快照成果失败' });
+  }
+});
+
 // ---【系统状态】健康检查接口 ---
+
 apiRouter.all('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -944,6 +1129,74 @@ export function bd09_to_gcj02(bd_lon: number, bd_lat: number) {
 }
 
 /**
+ * 依据 POI 的类别与名称特征进行归类分发
+ */
+export function classifyPoi(poi: any): string {
+  const type = (poi.type || '').toLowerCase();
+  const name = (poi.name || '').toLowerCase();
+  
+  if (
+    type.includes('学校') || type.includes('幼儿园') || type.includes('小学') || 
+    type.includes('中学') || type.includes('大学') || type.includes('高等院校') || 
+    type.includes('培训') || type.includes('科研') || type.includes('教育') || 
+    name.includes('小学') || name.includes('中学') || name.includes('大学') || 
+    name.includes('幼儿园') || name.includes('学校')
+  ) {
+    return '学校';
+  }
+  
+  if (
+    type.includes('医院') || type.includes('诊所') || type.includes('医疗') || 
+    type.includes('急救') || type.includes('卫生院') || type.includes('药店') || 
+    type.includes('疾病预防') || name.includes('医院') || name.includes('诊所') || 
+    name.includes('康复中心') || name.includes('社区卫生')
+  ) {
+    return '医院';
+  }
+  
+  if (
+    type.includes('加油站') || type.includes('气站') || type.includes('加气站') || 
+    type.includes('充电站') || type.includes('加氢站') || name.includes('加油站') || 
+    name.includes('加气站') || name.includes('充电站')
+  ) {
+    return '加油站';
+  }
+  
+  if (
+    type.includes('政府') || type.includes('办事处') || type.includes('公安') || 
+    type.includes('派出所') || type.includes('税务') || type.includes('民政') || 
+    type.includes('公厕') || type.includes('垃圾转运') || type.includes('消防') || 
+    type.includes('居委会') || type.includes('公共服务') || type.includes('社会团体') || 
+    type.includes('大厅') || name.includes('政府') || name.includes('办事处') || 
+    name.includes('居委会') || name.includes('派出所') || name.includes('服务中心')
+  ) {
+    return '公共服务设施';
+  }
+  
+  if (
+    type.includes('住宅') || type.includes('小区') || type.includes('居民') || 
+    type.includes('生活区') || type.includes('公寓') || type.includes('新村') || 
+    type.includes('别墅') || type.includes('社区') || type.includes('家属院') || 
+    name.includes('小区') || name.includes('家园') || name.includes('公寓') || 
+    name.includes('住宅') || name.includes('花园') || name.includes('新村')
+  ) {
+    return '居民区';
+  }
+  
+  if (
+    type.includes('商场') || type.includes('百货') || type.includes('超市') || 
+    type.includes('购物') || type.includes('商业') || type.includes('市场') || 
+    type.includes('写字楼') || type.includes('步行街') || type.includes('专卖店') || 
+    name.includes('商场') || name.includes('购物中心') || name.includes('广场') || 
+    name.includes('百货') || name.includes('超市') || name.includes('写字楼')
+  ) {
+    return '商场';
+  }
+  
+  return '其他';
+}
+
+/**
  * ---【业务核心逻辑】消防站点多维等时圈分析接口 ---
  * 定义了一个 POST 类型的 API 路由 '/analyze'，用来执行复杂的后端计算任务。
  */
@@ -986,6 +1239,7 @@ apiRouter.post('/analyze', checkUsageLimit, async (req, res) => {
     // ---【任务 A】深度 POI 兴趣点云探测 (POI Scanning) ---
     const aroundUrl = 'https://restapi.amap.com/v3/place/around'; // 指定向高德“周边搜索”数据接口发请求的地址
     const anchors: string[] = []; // 初始化一个空的“锚点库”，我们将收集成百上千个潜在的灭火目的地坐标
+    const poiMap = new Map<string, any>(); // 用于存放坐标位置到 POI 实体元数据的映射，便于后续分类统计
     
     // A.1 中心点深度扫描：抓取前 15 页数据（约 750 个真实点位），构建全量覆盖样本库
     for (let page = 1; page <= 15; page++) {
@@ -1001,7 +1255,10 @@ apiRouter.post('/analyze', checkUsageLimit, async (req, res) => {
           }
         });
         if (aroundRes.data.status === '1' && aroundRes.data.pois) {
-          aroundRes.data.pois.forEach((poi: any) => anchors.push(poi.location));
+          aroundRes.data.pois.forEach((poi: any) => {
+            poiMap.set(poi.location, poi);
+            anchors.push(poi.location);
+          });
           if (aroundRes.data.pois.length < 50) break;
         } else {
           break;
@@ -1079,24 +1336,49 @@ apiRouter.post('/analyze', checkUsageLimit, async (req, res) => {
           // --- 地块内最后 100 米的路程修正仿真 (Plot Offset Correction) ---
           // 逻辑痛点：普通导航 API 仅负责把你导到路边。需要计算该处与目的地真正的“地块重心”之间的间隙。
           const parcelGapDistance = getDistance(lastLng, lastLat, destLng, destLat); // 计算物理偏差值（米）
+          let finalTotalTime = accTime;
           
           if (parcelGapDistance > 5) { // 如果偏差超过 5 米，说明存在小区内道路、单位大门等隐性行程
             // 仿真逻辑：地块内速度 = 用户设定的 entrySpeed，响应补偿 = 用户设定的 entryPenalty（默认为 0 理想即时响应）。
             // 使用 Math.max(0.1, ...) 是防止除以零的数学错误。
             const entryPenaltyTime = (parcelGapDistance / Math.max(0.1, Number(entrySpeed || 3.0))) + Number(entryPenalty || 0); 
-            const finalTotalTime = accTime + entryPenaltyTime; // 合并马路形成和地块内行走的最终总体耗时
+            finalTotalTime = accTime + entryPenaltyTime; // 合并马路形成和地块内行走的最终总体耗时
             
             // 最终补完：将地块真实的重心物理坐标（WGS84 转换后）作为该测算支线的最后一个逻辑落位点存入
             const [wDestLng, wDestLat] = gcj02_to_wgs84(destLng, destLat);
             trailPoints.push([wDestLng, wDestLat, finalTotalTime]);
           }
+
+          // 核心需求：判断当前真实 POI 是否在限定等时圈时间内可达
+          const targetSec = (targetMin * 60) / (factor || 0.8);
+          if (finalTotalTime <= targetSec && poiMap.has(destStr)) {
+            return poiMap.get(destStr);
+          }
         }
       } catch (e) {
         console.error('Single route logic trace abandoned.', e); // 允许少部分路网坏点测算失败，确保大局稳定
       }
+      return null;
     });
 
-    await Promise.all(routePromises); // 集火式并发等待，直到全量 200 条支路的上万个轨迹点全部计算完毕并完成坐标对齐
+    const routeResults = await Promise.all(routePromises); // 集火式并发等待，直到全量所有支路数据返回
+    const reachedPois = routeResults.filter(Boolean);
+
+    // 统计不同分类的已覆盖 POI 数量
+    const poiStats: Record<string, number> = {
+      '学校': 0,
+      '医院': 0,
+      '加油站': 0,
+      '公共服务设施': 0,
+      '居民区': 0,
+      '商场': 0,
+      '其他': 0
+    };
+
+    reachedPois.forEach((poi: any) => {
+      const cat = classifyPoi(poi);
+      poiStats[cat] = (poiStats[cat] || 0) + 1;
+    });
 
     // 成果盖章：最后也将分析原点（消防站坐标）也转为标准 WGS-84 格式一同返回，用于前端精准校对 marker 位置
     const [wgsLng, wgsLat] = gcj02_to_wgs84(gcjLng, gcjLat);
@@ -1105,6 +1387,7 @@ apiRouter.post('/analyze', checkUsageLimit, async (req, res) => {
     res.json({
       trailPoints: trailPoints, // 海量的带时间标签的轨迹点点云数据集
       anchorCount: uniqueAnchors.length, // 反馈合计分析了多少个目的地地标点
+      poiStats: poiStats, // 核心：按类型分类统计的 POI 结果
       apiCalls: uniqueAnchors.length + 10, // 反馈后端累计消耗的高德地图信用点（API 调用数）
       wgsOrigin: [wgsLng, wgsLat], // 准确的地球姿态系统下的消防站原点坐标对 [经度, 纬度]
       remaining: res.locals.remaining
