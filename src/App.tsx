@@ -1538,8 +1538,8 @@ export default function App() {
                 </LayersControl.Overlay>
               </LayersControl>
 
-              {/* 渲染分析结果：在一个稳定的 LayerGroup 容器内在地图上直接绘制站点图标和等时圈图形 */}
-              <LayerGroup key="results-container-group">
+              {/* 渲染分析结果：为了解决 React 19 和 react-leaflet 在动/静态多边形/标记渲染并存时偶发的 DOM reconcile 冲突（例如 Failed to execute 'insertBefore' on 'Node' 故障），采用高健壮性的自更新关联 key 强制在结果集首尾改变或清空时销毁旧的 DOM 树分支并重新干净绘制 */}
+              <LayerGroup key={`results-container-group-${results.length}-${results.length > 0 ? results[results.length - 1].id : 'empty'}`}>
                 {results.map((res, i) => {
                   const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
                   return (
