@@ -1239,6 +1239,104 @@ apiRouter.post('/calibrate', checkUsageLimit, async (req, res) => {
   }
 });
 
+/**
+ * ---【实时交通流量接口】获取指定中心点和半径范围内的路况多段线 ---
+ */
+apiRouter.post('/traffic', checkUsageLimit, async (req, res) => {
+  const { apiKeys, center, radius, coordSystem } = req.body;
+
+  if (!apiKeys || !Array.isArray(apiKeys) || apiKeys.length === 0) {
+    return res.status(400).json({ error: '请先配置高德 Web 服务 API Key以读取实时路况' });
+  }
+  if (!center || !Array.isArray(center) || center.length !== 2) {
+    return res.status(400).json({ error: '缺失或无效中心点坐标' });
+  }
+
+  const [lng, lat] = center;
+  const rad = radius || 5000;
+
+  // 1. 将输入坐标转换到 GCJ-02 (高德坐标系)
+  let gcjLng = Number(lng);
+  let gcjLat = Number(lat);
+
+  if (coordSystem === 'BD-09') {
+    const converted = bd09_to_gcj02(gcjLng, gcjLat);
+    gcjLng = converted[0];
+    gcjLat = converted[1];
+  } else if (coordSystem === 'WGS-84') {
+    const converted = wgs84_to_gcj02(gcjLng, gcjLat);
+    gcjLng = converted[0];
+    gcjLat = converted[1];
+  }
+
+  // 轮询高德 API 密钥
+  const key = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+  const trafficUrl = 'https://restapi.amap.com/v3/traffic/status/circle';
+
+  try {
+    const response = await axios.get(trafficUrl, {
+      params: {
+        key,
+        location: `${gcjLng.toFixed(6)},${gcjLat.toFixed(6)}`,
+        radius: Math.min(rad, 5000), // 高德 API 限定最大 5000m
+        level: 5 // 获取高速及城市快速路、主要干线
+      },
+      timeout: 10000
+    });
+
+    if (response.data.status !== '1' || !response.data.trafficinfo) {
+      const gerr = response.data.info || response.data.message || '未知高德错误';
+      return res.status(400).json({ error: `高德交通API返回异常: ${gerr}` });
+    }
+
+    const trafficinfo = response.data.trafficinfo;
+    const roads = trafficinfo.roads || [];
+    const formattedRoads = [];
+
+    // 2. 解析道路，将高德 GCJ-02 polyline 转为 WGS-84 地标
+    for (const r of roads) {
+      if (!r.polyline || typeof r.polyline !== 'string') continue;
+
+      const pointsStr = r.polyline.split(';');
+      const coordinates: [number, number][] = [];
+
+      for (const pStr of pointsStr) {
+        const parts = pStr.split(',');
+        if (parts.length !== 2) continue;
+        const plng = Number(parts[0]);
+        const plat = Number(parts[1]);
+        if (isNaN(plng) || isNaN(plat)) continue;
+
+        // 高德 GCJ-02 -> WGS-84
+        const [wlng, wlat] = gcj02_to_wgs84(plng, plat);
+        coordinates.push([wlat, wlng]); // Leaflet polyline expects [lat, lng]
+      }
+
+      if (coordinates.length > 0) {
+        formattedRoads.push({
+          name: r.name || '未命名道路',
+          status: r.status || '1',     // 1 畅通, 2 缓行, 3 拥堵, 4 严重拥堵
+          direction: r.direction || '',
+          speed: r.speed ? Number(r.speed) : 0,
+          coordinates
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      description: trafficinfo.description || '状态正常',
+      evaluation: trafficinfo.evaluation || {},
+      roads: formattedRoads,
+      remaining: res.locals.remaining
+    });
+
+  } catch (error: any) {
+    console.error('Fetch traffic flow error:', error);
+    res.status(500).json({ error: `获取交通流数据失败: ${error.message}` });
+  }
+});
+
 // 挂载 API 路由到 /api 路径上完成
 // app.use('/api', apiRouter); // 已移入 startServer 内部以确保优先级
 
