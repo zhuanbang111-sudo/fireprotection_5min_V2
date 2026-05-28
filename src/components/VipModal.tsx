@@ -654,7 +654,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                       <span className="text-[9px] bg-amber-500/10 text-amber-400 font-mono font-bold">免除单点限制</span>
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                      免费版单次仅允许生成第一个消防工作点。升级 PRO 专业版，支持无限地点批量投放、全自动多站点并行精密等时圈测算。
+                      免费版单次仅允许生成第一个消防工作点。捐赠9.9元支持作者，可以升级 PRO 专业版，支持无限地点批量投放、全自动多站点并行精密等时圈测算。
                     </p>
                   </div>
                 </div>

@@ -1222,7 +1222,7 @@ export default function App() {
                 <StatusBadge 
                   user={user} 
                   onUpgradeClick={() => {
-                    setVipModalTitle('升级解锁 PRO 专业版');
+                    setVipModalTitle('捐赠9.9元，升级解锁 PRO 专业版');
                     setVipModalDesc('升级您的账户以解锁无限量多站点并行批量运算、由于资产安全及核心隐私政策，标准 ArcGIS/QGIS 分层面要素 Shapefile（WGS84投影）为 PRO 专业版独享。');
                     setIsVipModalOpen(true);
                   }}
@@ -1917,7 +1917,7 @@ export default function App() {
                     <StatusBadge 
                       user={user} 
                       onUpgradeClick={() => {
-                        setVipModalTitle('升级解锁 PRO 专业版算力特权');
+                        setVipModalTitle('升级解锁 PRO 专业版');
                         setVipModalDesc('升级您的账户以解锁无限量多站点并行批量运算、由于资产安全及核心隐私政策，标准 ArcGIS/QGIS 分层面要素 Shapefile（WGS84投影）为 PRO 专业版独享。');
                         setIsVipModalOpen(true);
                       }}
