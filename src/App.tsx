@@ -26,7 +26,7 @@ import {
   Crown,          // Crown VIP图标
   Gem             // Gem VIP图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
-import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl, LayerGroup, Polyline } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
+import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl, LayerGroup } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
 import L from 'leaflet'; // 导入 Leaflet 核心库
 import * as XLSX from 'xlsx'; // 导入 Excel 处理库
@@ -87,25 +87,6 @@ function MapUpdater({ center }: { center: [number, number] }) {
   React.useEffect(() => {
     map.setView(center, 13); // 当中心点变化时，自动平移并缩放地图
   }, [center, map]);
-  return null;
-}
-
-// 跟踪地图中心变化的组件，用于获取当前视窗内的实时路况
-function MapCenterTracker({ onCenterChange }: { onCenterChange: (center: [number, number]) => void }) {
-  const map = useMap();
-  React.useEffect(() => {
-    const onMoveEnd = () => {
-      const c = map.getCenter();
-      onCenterChange([c.lat, c.lng]);
-    };
-    map.on('moveend', onMoveEnd);
-    // 启动时初始化
-    const c = map.getCenter();
-    onCenterChange([c.lat, c.lng]);
-    return () => {
-      map.off('moveend', onMoveEnd);
-    };
-  }, [map, onCenterChange]);
   return null;
 }
 
@@ -235,13 +216,6 @@ export default function App() {
   const [results, setResults] = useState<AnalysisResult[]>([]); // 存储分析成功的站点结果
   const [logs, setLogs] = useState<string[]>([]); // 存储运行过程中的实时日志消息
 
-  // --- 实时交通流相关状态 ---
-  const [trafficRoads, setTrafficRoads] = useState<any[]>([]); // 实时路段集合
-  const [showTraffic, setShowTraffic] = useState(false); // 是否在地图上渲染交通线
-  const [trafficDesc, setTrafficDesc] = useState(''); // 区域态势文字描述
-  const [isFetchingTraffic, setIsFetchingTraffic] = useState(false); // 提取中
-  const [trafficRadius, setTrafficRadius] = useState<number>(3000); // 监测半径范围 (1-5公里)
-  const [currentViewCenter, setCurrentViewCenter] = useState<[number, number] | null>(null); // 地图当前物理视窗中心
   const [activeTab, setActiveTab] = useState<'map' | 'stats'>('map'); // 主视图当前显示的页面（地图或报表）
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false); // 反馈弹窗开关
   const [showUrgentPrompt, setShowUrgentPrompt] = useState(false); // 是否显示额度告急提示
@@ -258,55 +232,6 @@ export default function App() {
   // 添加一条带时间戳的日志
   const addLog = (msg: string) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
-  };
-
-  // 获取当前视窗的实时交通流
-  const fetchTrafficData = async () => {
-    const keyList = apiKeys.split(',').map(k => k.trim()).filter(Boolean);
-    if (keyList.length === 0) {
-      addLog('❌ 无法获取路况：请先在[系统主配置参数]中配置高德 Web 服务 API Key');
-      alert('无法获取路况：请先在左侧[主配参数栏]中配置高德 Web 服务 API Key。');
-      return;
-    }
-
-    // 优先采用地图视窗实时移动交互产生的 currentViewCenter，否则降级采用默认 mapCenter
-    const targetCenter = currentViewCenter || mapCenter;
-    if (!targetCenter) {
-      addLog('❌ 无法获取路况：地图尚未初始化，无有效中心点位置');
-      return;
-    }
-
-    setIsFetchingTraffic(true);
-    addLog(`🚦 正在向高德 API 请求获取中心 [${targetCenter[1].toFixed(4)}, ${targetCenter[0].toFixed(4)}] 周围 ${trafficRadius}米 的实时路网交通态势...`);
-
-    try {
-      const response = await axios.post('/api/traffic', {
-        apiKeys: keyList,
-        center: [targetCenter[1], targetCenter[0]], // [lng, lat]
-        radius: trafficRadius,
-        coordSystem: 'WGS-84' // Leaflet 地图在地球标准坐标系 WGS-84 下运行
-      });
-
-      if (response.data.success && response.data.roads) {
-        setTrafficRoads(response.data.roads);
-        setTrafficDesc(response.data.description);
-        setShowTraffic(true);
-        addLog(`✅ 成功加载比对 ${response.data.roads.length} 条交通路段流量：${response.data.description}`);
-      } else {
-        addLog('⚠️ 未能加载到该区域详细交通特征段，可能当前选择高德等级或此范围内无匹配道路。');
-      }
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.error || error.response?.data?.message || error.message;
-      addLog(`❌ 获取实时交通流异常: ${errorMsg}`);
-      if (error.response?.status === 403) {
-        setAuthError(errorMsg);
-        setVipModalTitle('升级解锁 1km-5km 范围内实时路网流量');
-        setVipModalDesc('升级您的账户以解锁无限量多区域、多站点并行批量运算、高级实时交通流量感知雷达等专属算力特权。');
-        setIsVipModalOpen(true);
-      }
-    } finally {
-      setIsFetchingTraffic(false);
-    }
   };
 
   // --- 使用 React Query 检查后端健康状态 ---
@@ -427,7 +352,11 @@ export default function App() {
         }
       }
     } catch (error: any) {
-      console.error('[LocalAuth] 发生认证错误:', error);
+      if (error.response?.status === 401) {
+        console.warn('[LocalAuth] 收到 401 认证拒绝状态(凭证不匹配或需要注册等):', error.message || error);
+      } else {
+        console.error('[LocalAuth] 发生非预期认证错误:', error);
+      }
       let errMsg = '服务不可用或网络异常，请稍后重试';
       
       if (error.response?.status === 401) {
@@ -1647,135 +1576,9 @@ export default function App() {
                 })}
               </LayerGroup>
 
-              {/* 渲染实时交通流量 */}
-              {showTraffic && trafficRoads.length > 0 && (
-                <LayerGroup key="traffic-roads-group">
-                  {trafficRoads.map((road, idx) => {
-                    // 获取对应的路况颜色
-                    let color = '#94a3b8'; // 默认灰色 (未知)
-                    let statusText = '未知';
-                    if (road.status === '1') {
-                      color = '#10b981'; // 畅通绿
-                      statusText = '畅通';
-                    } else if (road.status === '2') {
-                      color = '#f59e0b'; // 缓行黄
-                      statusText = '缓行';
-                    } else if (road.status === '3') {
-                      color = '#ef4444'; // 拥堵红
-                      statusText = '拥堵';
-                    } else if (road.status === '4') {
-                      color = '#991b1b'; // 严重拥堵深红
-                      statusText = '严重拥堵';
-                    }
-
-                    return (
-                      <Polyline
-                        key={`traffic-${road.name}-${idx}`}
-                        positions={road.coordinates}
-                        pathOptions={{
-                          color: color,
-                          weight: 5,
-                          opacity: 0.85,
-                          lineJoin: 'round'
-                        }}
-                      >
-                        <Popup>
-                          <div className="p-1 min-w-[120px]">
-                            <h4 className="font-bold text-xs text-slate-800">{road.name}</h4>
-                            <p className="text-[10px] text-slate-500 mt-1">状态: <span className="font-semibold" style={{ color }}>{statusText}</span></p>
-                            {road.direction && <p className="text-[10px] text-slate-500">方向: {road.direction}</p>}
-                            {road.speed > 0 && <p className="text-[10px] text-slate-500">均速: {road.speed} km/h</p>}
-                          </div>
-                        </Popup>
-                      </Polyline>
-                    );
-                  })}
-                </LayerGroup>
-              )}
-
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
               <MapUpdater center={mapCenter} /> {/* 当中心点状态改变时手动平移地图 */}
-              <MapCenterTracker onCenterChange={setCurrentViewCenter} />
             </MapContainer>
-
-            {/* 实时路况控制器悬浮窗 */}
-            <div className="absolute left-4 top-4 z-[1000] bg-white/95 backdrop-blur-md p-4 rounded-xl shadow-xl border border-slate-200/85 w-72 transition-all">
-              <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                <div className="flex items-center gap-1.5 text-slate-800 font-bold text-sm">
-                  <span className="text-base text-amber-500">🚦</span>
-                  <span>实时路况流量叠加</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className={`w-2 h-2 rounded-full ${showTraffic ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
-                  <span className="text-[10px] text-slate-500">{showTraffic ? '监控中' : '已关闭'}</span>
-                </div>
-              </div>
-
-              <div className="space-y-3 flex flex-col">
-                <div className="flex items-center justify-between text-xs text-slate-600">
-                  <span>路网搜索半径</span>
-                  <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200/50">
-                    {([1000, 3000, 5000] as const).map((r) => (
-                      <button
-                        key={r}
-                        onClick={() => setTrafficRadius(r)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
-                          trafficRadius === r
-                            ? 'bg-white text-slate-800 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        {r / 1000}km
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {trafficRoads.length > 0 && showTraffic && (
-                  <div className="bg-slate-50 rounded-lg p-2.5 border border-slate-100 space-y-1">
-                    <p className="text-[10px] font-semibold text-slate-700">区域宏观态势评价：</p>
-                    <p className="text-[11px] text-slate-600 leading-relaxed font-mono">
-                      {trafficDesc || '暂无路况描述数据'}
-                    </p>
-                    <p className="text-[9px] text-slate-400 mt-1">
-                      监测到主干路网：{trafficRoads.length} 段
-                    </p>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-2 pt-1">
-                  <button
-                    onClick={fetchTrafficData}
-                    disabled={isFetchingTraffic}
-                    className="w-full bg-slate-900 border border-slate-900 shadow text-white hover:bg-slate-800 transition-all font-semibold rounded-lg text-xs py-2 flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    {isFetchingTraffic ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>正在拉取最新流量...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>⚡ 刷新当前区域流量</span>
-                      </>
-                    )}
-                  </button>
-
-                  {trafficRoads.length > 0 && (
-                    <button
-                      onClick={() => setShowTraffic(!showTraffic)}
-                      className={`w-full font-semibold rounded-lg text-xs py-2 border transition-all cursor-pointer ${
-                        showTraffic
-                          ? 'border-red-200 hover:border-red-300 bg-red-50 text-red-600 hover:bg-red-100/50'
-                          : 'border-slate-200 hover:border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      {showTraffic ? '隐藏路况图层' : '显示路况图层'}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* 报表视图：以电子表格形式展示分析详情 */}
