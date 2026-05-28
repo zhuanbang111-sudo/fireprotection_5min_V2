@@ -26,7 +26,7 @@ import {
   Crown,          // Crown VIP图标
   Gem             // Gem VIP图标
 } from 'lucide-react'; // 从 lucide-react 图标库导入图标组件
-import { MapContainer, TileLayer, Marker, Popup, GeoJSON, useMap, LayersControl, ZoomControl, LayerGroup } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
+import { MapContainer, TileLayer, useMap, LayersControl, ZoomControl } from 'react-leaflet'; // 导入 React-Leaflet 地图组件
 import 'leaflet/dist/leaflet.css'; // 导入 Leaflet 样式文件
 import L from 'leaflet'; // 导入 Leaflet 核心库
 import * as XLSX from 'xlsx'; // 导入 Excel 处理库
@@ -89,6 +89,65 @@ function MapUpdater({ center }: { center: [number, number] }) {
   }, [center, map]);
   return null;
 }
+
+// 采用 Vanilla Leaflet 自主更新机制托管绘制测算多边形和标记
+// 此组件专门用来解决 React 19 和 react-leaflet 在动、静态图层并存且存在弹窗 (Popup) 周期时发生 DOM 调和碰撞的 "insertBefore" 崩溃问题
+function AnalysisLayers({ results, icon }: { results: AnalysisResult[], icon: L.Icon }) {
+  const map = useMap();
+
+  React.useEffect(() => {
+    if (!map) return;
+
+    // 追踪本 Effect 创建的图层，方便精确清理，避免影响其他图层
+    const addedLayers: L.Layer[] = [];
+
+    results.forEach((res) => {
+      // 1. 创建并添加等时圈多边形 GeoJSON 层
+      if (res.geometry) {
+        const geoLayer = L.geoJSON(res.geometry, {
+          style: {
+            fillColor: '#ef4444', // 填充红色
+            fillOpacity: 0.35,   // 提高透明度增强对比
+            color: '#b91c1c',     // 边框深红
+            weight: 3,           // 加粗边框
+            lineJoin: 'round',    // 圆角连接
+            opacity: 0.8          // 边框不透明度
+          }
+        });
+        geoLayer.addTo(map);
+        addedLayers.push(geoLayer);
+      }
+
+      // 2. 创建并添加站点位置标记 (Marker)
+      if (res.station && typeof res.station.lat === 'number' && typeof res.station.lng === 'number') {
+        const marker = L.marker([res.station.lat, res.station.lng], { icon });
+
+        // 创建原始 DOM Popup，确保不经过 React virtual DOM
+        const popupDiv = document.createElement('div');
+         popupDiv.className = 'p-1';
+         popupDiv.innerHTML = `
+           <h3 class="font-bold text-sm text-red-600">${res.station.station_name || '未命名站点'}</h3>
+           <p class="text-[10px] text-slate-500 mt-1">覆盖面积: ${res.area ? res.area.toFixed(2) : 0} km²</p>
+         `;
+
+         marker.bindPopup(popupDiv);
+         marker.addTo(map);
+         addedLayers.push(marker);
+       }
+     });
+
+     // 清理函数：精准卸载本周期内由本组件声明的所有 Leaflet 层
+     return () => {
+       addedLayers.forEach((layer) => {
+         if (map.hasLayer(layer)) {
+           map.removeLayer(layer);
+         }
+       });
+     };
+   }, [map, results, icon]);
+
+   return null;
+ }
 
 const TIANDITU_KEY = 'e97bd73ab261e619504c77adf4f61494'; // 天地图 API Key
 const MAX_DEMO_USAGE = 5;
@@ -1538,43 +1597,8 @@ export default function App() {
                 </LayersControl.Overlay>
               </LayersControl>
 
-              {/* 渲染分析结果：为了解决 React 19 和 react-leaflet 在动/静态多边形/标记渲染并存时偶发的 DOM reconcile 冲突（例如 Failed to execute 'insertBefore' on 'Node' 故障），采用高健壮性的自更新关联 key 强制在结果集首尾改变或清空时销毁旧的 DOM 树分支并重新干净绘制 */}
-              <LayerGroup key={`results-container-group-${results.length}-${results.length > 0 ? results[results.length - 1].id : 'empty'}`}>
-                {results.map((res, i) => {
-                  const resId = res.id ? `${res.id}-${i}` : `res-${i}`;
-                  return (
-                    <LayerGroup key={`result-g-${resId}`}>
-                      {/* 站点坐标标记 (Marker) */}
-                      <Marker 
-                        key={`marker-${resId}`}
-                        position={[res.station.lat, res.station.lng]} 
-                        icon={fireIcon}
-                      >
-                        {/* 点击图标弹出的详细信息框 */}
-                        <Popup>
-                          <div className="p-1">
-                            <h3 className="font-bold text-sm text-red-600">{res.station.station_name}</h3>
-                            <p className="text-[10px] text-slate-500 mt-1">覆盖面积: {res.area} km²</p>
-                          </div>
-                        </Popup>
-                      </Marker>
-                      {/* GeoJSON 数据展示层：用于绘制分析出的等时圈多边形 */}
-                      <GeoJSON 
-                        key={`iso-${resId}`}
-                        data={res.geometry} 
-                        style={{
-                          fillColor: '#ef4444', // 填充红色
-                          fillOpacity: 0.35,   // 稍微提高透明度增强对比
-                          color: '#b91c1c',     // 边框深红
-                          weight: 3,           // 加粗边框
-                          lineJoin: 'round',    // 圆角连接
-                          opacity: 0.8          // 边框不透明度
-                        }} 
-                      />
-                    </LayerGroup>
-                  );
-                })}
-              </LayerGroup>
+              {/* 渲染分析结果：为了解决 React 19 和 react-leaflet 在动/静态多边形、标记渲染并存且存在动态弹出窗口 (Popup) 周期时偶发的 DOM reconcile 冲突 (Failed to execute 'insertBefore' on 'Node' 故障)，此组件采用完全由 Vanilla Leaflet 自定义托管的自更新机制，干净利落地在 MapView 上增加/注销图层，完美抗干扰 */}
+              <AnalysisLayers results={results} icon={fireIcon} />
 
               <ZoomControl position="bottomright" /> {/* 放置缩放按钮 */}
               <MapUpdater center={mapCenter} /> {/* 当中心点状态改变时手动平移地图 */}
