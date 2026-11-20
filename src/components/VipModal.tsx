@@ -40,7 +40,8 @@ export const VipModal: React.FC<VipModalProps> = ({
   const [customAlipayQrUrl, setCustomAlipayQrUrl] = useState('');
   
   // 1.5. 系统配置数据绑定的价格
-  const [price, setPrice] = useState<number>(399.00);
+  const [price, setPrice] = useState<number>(DEFAULT_FALLBACK_PRICE);
+  const annualPrice = `¥${price.toFixed(2)} / 年`;
   const [adminPriceInput, setAdminPriceInput] = useState<string>('399.00');
   const [isPriceSaving, setIsPriceSaving] = useState(false);
   
@@ -247,12 +248,12 @@ export const VipModal: React.FC<VipModalProps> = ({
     e.preventDefault();
     const token = localStorage.getItem('fire_isochrone_auth_token');
     if (!token) {
-      setUpgradeError('抱歉，激活服务需要您先“注册”或“登录”账号后，才能将 VIP 权限永久绑定至该账号！请先关闭此弹窗并于系统顶部注册或登录账号。');
+      setUpgradeError('请登录或注册后提交付款凭证。');
       return;
     }
 
     if (!voucherName.trim()) {
-      setUpgradeError('请输入转账人的支付宝/微信账号昵称，或转账账单后 4 位，以便财务比对激活！');
+      setUpgradeError('请填写付款昵称或订单号后 4 位。');
       return;
     }
 
@@ -636,8 +637,9 @@ export const VipModal: React.FC<VipModalProps> = ({
                   {title}
                   <span className="text-[10px] uppercase font-bold tracking-widest bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded">PRO v2</span>
                 </h3>
+                <p className="mt-2 text-sm font-bold text-amber-300">{annualPrice}</p>
                 <p className="text-[10px] text-slate-400 mt-2 max-w-sm mx-auto leading-relaxed">
-                  {description} • 年度授权方案
+                  {description}
                 </p>
               </div>
 
@@ -654,7 +656,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                       <span className="text-[9px] bg-amber-500/10 text-amber-400 font-mono font-bold">免除单点限制</span>
                     </h4>
                     <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-                      免费版单次仅允许生成第一个消防工作点。捐赠9.9元支持作者，可以升级 PRO 专业版，支持无限地点批量投放、全自动多站点并行精密等时圈测算。
+                      免费版每次分析一个站点，PRO 支持多站点批量分析。
                     </p>
                   </div>
                 </div>
@@ -795,9 +797,9 @@ export const VipModal: React.FC<VipModalProps> = ({
                 <div className="space-y-5">
                   {/* 金额展示区域 */}
                   <div className="bg-white/5 border border-white/5 rounded-2xl p-4 text-center relative overflow-hidden">
-                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 专业版【年度】授权费用</p>
+                    <p className="text-slate-400 text-[10px] uppercase font-bold tracking-widest mb-1">PRO 年费</p>
                     <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 font-sans tracking-tight">
-                      ￥{price.toFixed(2)} / 年
+                      {annualPrice}
                     </div>
                   </div>
 
@@ -851,31 +853,31 @@ export const VipModal: React.FC<VipModalProps> = ({
                       </div>
                       
                       <div className="text-[10px] text-slate-500 text-center font-bold">
-                        手机可左右滑动查看二维码，支持任意方式付款
+                        左右滑动可切换微信和支付宝
                       </div>
                     </div>
 
                     {/* 右侧：交易核验认领申领表单 */}
                     <form onSubmit={handleSubmitOrder} className="space-y-3 text-left">
-                      <span className="text-[11px] font-black text-amber-400 block tracking-wider uppercase">📝 完成支付后填写下表认领</span>
+                      <span className="text-[11px] font-black text-amber-400 block tracking-wider uppercase">付款后提交凭证</span>
                       
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 block font-bold">您的微信/支付宝转账昵称 或 单号后4位 (必填)</label>
+                        <label className="text-[10px] text-slate-400 block font-bold">付款昵称或订单号后 4 位（必填）</label>
                         <input
                           type="text"
                           required
                           value={voucherName}
                           onChange={(e) => setVoucherName(e.target.value)}
-                          placeholder="例如: 张三(微信) 或 后四位9821"
+                          placeholder="如张三或 9821"
                           className="w-full bg-slate-950/80 border border-slate-700/60 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-amber-500 transition-all"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 block font-bold">附带支付成功截图（可选，极速秒审）</label>
+                        <label className="text-[10px] text-slate-400 block font-bold">付款截图（选填）</label>
                         <label className="w-full flex items-center justify-center gap-1.5 border border-dashed border-slate-700/60 rounded-xl py-2 px-3 bg-slate-950/40 hover:bg-slate-950 text-slate-400 hover:text-amber-400 cursor-pointer text-[10px] font-bold transition-all">
                           <Upload className="w-3.5 h-3.5" />
-                          <span>{voucherScreenshot ? '已装载付款截图一张' : '点击上传转账回单截图'}</span>
+                          <span>{voucherScreenshot ? '已选择截图' : '上传截图'}</span>
                           <input
                             type="file"
                             accept="image/*"
@@ -897,7 +899,7 @@ export const VipModal: React.FC<VipModalProps> = ({
                         className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-slate-950 font-black text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 mt-1"
                       >
                         {isUpgrading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        {isUpgrading ? '正在提交凭证至主站云端...' : '我已扫码并提交核查'}
+                        {isUpgrading ? '提交中…' : '提交审核'}
                       </button>
                     </form>
                   </div>
@@ -906,10 +908,10 @@ export const VipModal: React.FC<VipModalProps> = ({
                   <div className="bg-slate-950/50 border border-white/5 rounded-2xl p-3 text-[10px] text-slate-400 space-y-1 text-center md:text-left">
                     <div className="flex items-center gap-1.5 text-amber-400 justify-center md:justify-start font-black">
                       <Heart className="w-3 h-3 text-rose-500 fill-rose-500 animate-[pulse_1s_infinite]" />
-                      <span>资金隔离与确收承诺</span>
+                      <span>开通说明</span>
                     </div>
                     <p className="leading-relaxed">
-                      云端账册独立审计运行。您填入的转账核对单将直接写入 D1 数据库锁存，您的邮箱 <span className="text-amber-300 font-mono underline">{user?.email}</span> 会永久打上特权标记，在管理员核对微信/支付宝后自动极速解锁过账（支持人工 1v1 客服通道支持拦截升级！）。
+                      管理员核验付款后，将为当前账号开通 PRO。
                     </p>
                   </div>
 
