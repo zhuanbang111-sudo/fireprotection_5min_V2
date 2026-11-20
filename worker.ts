@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import crypto from 'node:crypto';
-import shpwrite from 'shp-write';
+import { canExportShapefile } from './src/exportAccess';
+import { getExportFeatures, zipShapefile } from './src/shapefileExport';
 
 type Bindings = {
   DB: any;
@@ -1079,13 +1080,27 @@ apiApp.post('/calibrate', checkUsageLimit, async (c) => {
  */
 apiApp.post('/export-shp', async (c) => {
   try {
-    const body = await c.req.json();
-    const { collection } = body;
-    if (!collection) {
-      return c.json({ success: false, message: '无效的研究数据要素' }, 400);
+    const token = c.req.header('authorization')?.match(/^Bearer (\S+)$/i)?.[1];
+    const session = token && verifyToken(token);
+    if (!session) {
+      return c.json({ success: false, message: '请登录后导出 Shapefile' }, 401);
     }
 
-    const zipArrayBuffer = await shpwrite.zip(collection);
+    const user = await c.env.DB.prepare('SELECT email, vip_level, vip_expires_at FROM users WHERE id = ?')
+      .bind(session.userId).first();
+    if (!user) {
+      return c.json({ success: false, message: '账号不存在，请重新登录' }, 401);
+    }
+    if (!canExportShapefile(user)) {
+      return c.json({ success: false, message: '导出 Shapefile 需要管理员权限或有效的 PRO 会员' }, 403);
+    }
+
+    const body = await c.req.json().catch(() => null);
+    const features = getExportFeatures(body?.collection);
+    if (!features) {
+      return c.json({ success: false, message: '没有可导出的有效面要素，请重新分析后导出' }, 400);
+    }
+    const zipArrayBuffer = await zipShapefile(features);
     
     c.header('Content-Type', 'application/zip');
     c.header('Content-Disposition', 'attachment; filename=fire_isochrones.zip');

@@ -21,7 +21,7 @@ export default defineConfig(({mode}) => {
         output: {
           manualChunks: {
             'leaflet-vendor': ['leaflet', 'react-leaflet'],
-            'analysis-vendor': ['@turf/turf', 'proj4', 'shp-write', 'jszip'],
+            'analysis-vendor': ['@turf/turf', 'proj4'],
             'ui-vendor': ['react', 'react-dom', 'motion', 'lucide-react']
           }
         }

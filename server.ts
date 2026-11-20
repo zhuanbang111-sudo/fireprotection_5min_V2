@@ -6,7 +6,8 @@ import cors from 'cors'; // 导入 cors 中间件，它的作用是打破浏览�
 import * as dotenv from 'dotenv'; // 导入 dotenv 工具，它可以将 .env 文件中的配置项自动加载到系统的环境变量中，方便安全地读取 API Key
 import fs from 'fs';
 import crypto from 'crypto';
-import shpwrite from 'shp-write';
+import { canExportShapefile } from './src/exportAccess';
+import { getExportFeatures, zipShapefile } from './src/shapefileExport';
 
 
 dotenv.config(); // 立即执行配置加载，确保代码在后续运行时能通过 process.env 获取到 API Key 等敏感信息
@@ -853,13 +854,25 @@ apiRouter.post('/orders/approve', async (req, res) => {
 // ---【GIS 矢量 Shapefile 后端流式打包下载接口】---
 apiRouter.post('/export-shp', async (req, res) => {
   try {
-    const { collection } = req.body;
-    if (!collection) {
-      return res.status(400).json({ success: false, message: '无效的研究数据要素' });
+    const token = req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1];
+    const session = token && verifyToken(token);
+    if (!session) {
+      return res.status(401).json({ success: false, message: '请登录后导出 Shapefile' });
     }
 
-    // 调用 shpwrite.zip 直接生成标准的 Zip 压缩二进制流
-    const zipArrayBuffer = await shpwrite.zip(collection);
+    const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(session.userId).first();
+    if (!user) {
+      return res.status(401).json({ success: false, message: '账号不存在，请重新登录' });
+    }
+    if (!canExportShapefile(user)) {
+      return res.status(403).json({ success: false, message: '导出 Shapefile 需要管理员权限或有效的 PRO 会员' });
+    }
+
+    const features = getExportFeatures(req.body?.collection);
+    if (!features) {
+      return res.status(400).json({ success: false, message: '没有可导出的有效面要素，请重新分析后导出' });
+    }
+    const zipArrayBuffer = await zipShapefile(features);
     
     // 强制下发 zip 下载属性头部，彻底消灭前端 JSZip / Buffer 缺少 polyfill 的编译问题
     res.setHeader('Content-Type', 'application/zip');

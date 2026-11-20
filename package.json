@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild worker.ts --bundle --platform=neutral --main-fields=module,main --format=esm --minify --sourcemap --outfile=dist/worker.js --external:crypto --external:node:crypto --alias:assert=./src/assert-shim.js --alias:node:assert=./src/assert-shim.js",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild worker.ts --bundle --platform=neutral --main-fields=module,main --format=esm --minify --sourcemap --outfile=dist/worker.js --external:crypto --external:node:crypto --alias:assert=./src/assert-shim.js --alias:node:assert=./src/assert-shim.js --alias:jszip=./node_modules/jszip/dist/jszip.min.js",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -13,6 +13,7 @@
   "dependencies": {
     "@google/genai": "^1.29.0",
     "@hono/node-server": "^2.0.2",
+    "@mapbox/shp-write": "^0.4.3",
     "@tailwindcss/vite": "^4.1.14",
     "@tanstack/react-query": "^5.100.10",
     "@tanstack/react-query-devtools": "^5.100.10",
@@ -34,7 +35,6 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-leaflet": "^5.0.0",
-    "shp-write": "^0.3.2",
     "vite": "^6.2.0",
     "xlsx": "^0.18.5"
   },

@@ -37,7 +37,6 @@ import * as XLSX from 'xlsx'; // 导入 Excel 处理库
 import axios from 'axios'; // 导入网络请求库
 import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
-import JSZip from 'jszip'; // 导入压缩包处理库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
 import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
@@ -48,7 +47,7 @@ import { SummaryReport } from './components/SummaryReport'; // 导入空间成�
 import { AdminDashboard } from './components/AdminDashboard'; // 导入管理员对账中心
 
 // @ts-ignore
-import shpwrite from 'shp-write'; // 导入 Shapefile 导出库
+import { canExportShapefile, hasActivePro, isAdministrator } from './exportAccess';
 
 // 修复 Leaflet 默认图标在某些构建环境下无法显示的 Bug
 // @ts-ignore
@@ -236,19 +235,8 @@ export default function App() {
   const [vipModalTitle, setVipModalTitle] = useState('解锁 PRO 专业版');
   const [vipModalDesc, setVipModalDesc] = useState('您的账户当前为【免费试用】状态，请升级以解锁批量测算与核心成果矢量文件导出权限');
 
-  const isVip = useMemo(() => {
-    if (!user) return false;
-    if (user.isTrial) return false; // 试用账户不算 VIP
-    if (user.vip_level !== 'pro') return false;
-    if (user.vip_expires_at) {
-      try {
-        return new Date(user.vip_expires_at) > new Date(); // 判断到期时间是否合规
-      } catch {
-        return false;
-      }
-    }
-    return false;
-  }, [user]);
+  const isVip = hasActivePro(user);
+  const isAdmin = isAdministrator(user);
 
   const vipExpiryDateStr = useMemo(() => {
     if (!user || !user.vip_expires_at) return '';
@@ -835,7 +823,7 @@ export default function App() {
     }
 
     // 【商业卡口一：多站点批量计算限制拦截】
-    if (stations.length > 1 && !isVip) {
+    if (stations.length > 1 && !isVip && !isAdmin) {
       if (user && (user.vip_level === 'pro' || user.vip_level === 'admin')) {
         // 如果是 pro 或 admin 账户，强制逻辑关闭该弹窗并继续分析流（重定向至分析流）
         setIsVipModalOpen(false);
@@ -1148,7 +1136,7 @@ export default function App() {
   // 导出分析结果为 GIS 专业的 Shapefile 格式 (WGS84 坐标系)
   const exportSHP = async () => {
     // 【商业卡口二：GIS 矢量数据资产物理卡卡口】
-    if (!isVip) {
+    if (!canExportShapefile(user)) {
       setVipModalTitle('🔒 导出 Shapefile 专属限制');
       setVipModalDesc('由本引擎生成的具有精密拓扑坐标 of WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属功能。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
       setIsVipModalOpen(true);
@@ -1183,9 +1171,18 @@ export default function App() {
       window.URL.revokeObjectURL(url);
       
       addLog('✅ Shapefile 矢量资源包已成功下载！');
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      addLog('❌ 导出 Shapefile 失败，请检查网络或后端服务');
+      let message = '请检查网络或后端服务';
+      if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
+        try {
+          const body = JSON.parse(await e.response.data.text());
+          if (typeof body.message === 'string') message = body.message;
+        } catch {
+          // Keep the fallback for non-JSON responses.
+        }
+      }
+      addLog(`❌ 导出 Shapefile 失败：${message}`);
     }
   };
 
@@ -1235,7 +1232,7 @@ export default function App() {
                 >
                   <span>Sign Out</span>
                 </button>
-                {(user?.vip_level === 'admin' || ['zhuanbang111@gmail.com', '714400040@qq.com', 'zhuanbang111@foxmail.com'].includes(user?.email?.toLowerCase()?.trim() || '')) && (
+                {isAdmin && (
                   <button
                     onClick={() => navigateTo('/admin')}
                     className="text-[9px] text-red-500 hover:text-red-600 font-black transition-colors uppercase tracking-tight flex items-center bg-red-50 border border-red-200/55 px-1.5 py-0.5 rounded ml-1.5 shadow-sm"
