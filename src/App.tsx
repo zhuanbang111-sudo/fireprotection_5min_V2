@@ -38,7 +38,6 @@ import axios from 'axios'; // 导入网络请求库
 import * as turf from '@turf/turf'; // 导入地理空间计算库
 import { saveAs } from 'file-saver'; // 导入文件保存库
 import { motion, AnimatePresence } from 'motion/react'; // 导入动画库
-import { useQuery } from '@tanstack/react-query'; // 导入 React Query
 
 import { FeedbackModal } from './components/FeedbackModal'; // 导入反馈组件
 import { VipModal } from './components/VipModal'; // 导入VIP专属弹层
@@ -210,7 +209,6 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [authError, setAuthError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isBackendReady, setIsBackendReady] = useState(false);
 
   // --- 全端微路由系统 (微前端单页接管核心) ---
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
@@ -288,25 +286,8 @@ export default function App() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // --- 使用 React Query 检查后端健康状态 ---
-  const { data: healthData, error: healthFetchError, isFetched: isHealthFetched } = useQuery({
-    queryKey: ['backendHealth'],
-    queryFn: async () => {
-      const res = await axios.get('/api/health');
-      return res.data;
-    },
-    staleTime: 5 * 60 * 1000, // 5分钟内不重复检查
-    retry: 1,
-  });
-
   // --- 账户状态还原与初始化 ---
   useEffect(() => {
-    // 1. 初始化健康检查
-    if (isHealthFetched && healthData) {
-      const isHtml = typeof healthData === 'string' && healthData.toLowerCase().includes('<!doctype html>');
-      setIsBackendReady(!isHtml);
-    }
-
     let isMounted = true;
 
     // 2. 检查演示账号 (优先从本地恢复，以维持计次)
@@ -365,7 +346,7 @@ export default function App() {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [healthData, isHealthFetched]);
+  }, []);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -418,13 +399,13 @@ export default function App() {
         const serverMsg = error.response.data?.message || '';
         if (serverMsg === 'already registered') {
           addLog('ℹ️ 自动切换：检测到该邮箱已注册，已为您切换为登录模式。');
-          setAuthError('该账号已经注册过了，已为您自动切换至登录模式。请直接在下方输入密码并点击“登录”。');
+          setAuthError('该邮箱已注册，请输入密码登录。');
           setIsRegistering(false);
           setIsLoading(false);
           return;
         } else {
           addLog('❌ 登录失败：账号密码有误、不存在或凭证错误。');
-          setAuthError('账号不存在或密码输入错误！请检查邮箱地址或密码。');
+          setAuthError('邮箱或密码不正确，请重试。');
           setIsLoading(false);
           return;
         }
@@ -434,17 +415,17 @@ export default function App() {
         const serverMsg = error.response.data.message;
         if (serverMsg === 'already registered') {
           addLog('ℹ️ 自动切换：检测到该邮箱已注册，已为您切换为登录模式。');
-          setAuthError('该账号已经注册过了，已为您自动切换至登录模式。请直接在下方输入密码并点击“登录”。');
+          setAuthError('该邮箱已注册，请输入密码登录。');
           setIsRegistering(false);
           setIsLoading(false);
           return;
         } else if (serverMsg.includes('at least 6 characters')) {
           addLog('❌ 注册拦截：密码长度不符合要求。');
-          setAuthError('密码太弱！出于安全考虑，密码长度必须大于或等于 6 位数。');
+          setAuthError('密码至少需要 6 个字符。');
           return;
         } else if (serverMsg === 'Invalid login credentials' || serverMsg === 'Invalid credentials') {
           addLog('❌ 登录失败：账号密码有误或不存在。');
-          setAuthError('账号不存在或密码不正确！请检查邮箱地址并重试密码输入。');
+          setAuthError('邮箱或密码不正确，请重试。');
           return;
         } else {
           errMsg = serverMsg;
@@ -519,41 +500,28 @@ export default function App() {
               <h1 className="text-2xl font-black text-white tracking-tight mt-4">
                 FireIsochrone <span className="text-red-500">PRO V2</span>
               </h1>
-              <p className="text-slate-400 text-[11px] font-bold uppercase tracking-widest">
-                {currentPath === '/admin' ? '请先登录管理员账号' : (isRegistering ? '立即创建您的账号' : '消防仿真系统授权登录')}
+              <p className="text-sm text-slate-300">
+                消防设施可达性评估系统
               </p>
+              {currentPath === '/admin' && !isRegistering && (
+                <p className="text-xs text-slate-400">请使用管理员账号登录。</p>
+              )}
             </div>
 
             <div className="space-y-4">
-              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-2 text-center">
-                <p className="text-[10px] text-amber-200/80 leading-relaxed">
-                  <span className="font-bold text-amber-400">💡 提示：</span>
-                  请输入常用邮箱和密码，即可直接注册、登录并启用专属消防分析工作区。
-                </p>
-                {isHealthFetched && healthData && (
-                  <p className="text-[9px] text-slate-300 mt-2 border-t border-white/10 pt-1.5 leading-normal">
-                    当前环境: <span className="text-yellow-400 font-mono font-bold">{healthData.environment === 'cloudflare-workers' ? '🩵 Cloudflare Workers (D1 生产库)' : '🧡 AI Studio 本地沙盒 (JSON 仿真库)'}</span>
-                    <br />
-                    <span className="text-slate-400">
-                      {healthData.environment === 'cloudflare-workers' 
-                        ? '👉 注册信息会写入您真正的 Cloudflare D1 数据库。' 
-                        : 'ℹ️ 此时任何注册操作仅保存于本地 `.data/d1_storage.json` 备份文件中，不写入您 Cloudflare 的 D1 库。部署上线后，用户在生产页面的注册才会保存至您的 D1 数据库！'}
-                    </span>
-                  </p>
-                )}
-              </div>
-
               {/* 选项卡切换 */}
               <div className="flex bg-white/5 p-1 rounded-lg border border-white/10">
                 <button 
                   type="button"
+                  aria-pressed={!isRegistering}
                   onClick={() => { setIsRegistering(false); setAuthError(''); }}
                   className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${!isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  账号登录
+                  登录
                 </button>
                 <button 
                   type="button"
+                  aria-pressed={isRegistering}
                   onClick={() => { setIsRegistering(true); setAuthError(''); }}
                   className={`flex-1 py-1.5 text-[11px] font-bold rounded-md transition-all ${isRegistering ? 'bg-red-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200'}`}
                 >
@@ -564,12 +532,12 @@ export default function App() {
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {isRegistering && (
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">用户名 (姓名/单位)</label>
+                    <label htmlFor="auth-display-name" className="text-xs font-semibold text-slate-300 ml-1">姓名或单位</label>
                     <input 
+                      id="auth-display-name"
                       type="text" 
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="您的姓名"
                       required={isRegistering}
                       className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
                     />
@@ -577,9 +545,11 @@ export default function App() {
                 )}
                 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">电子邮箱</label>
+                  <label htmlFor="auth-email" className="text-xs font-semibold text-slate-300 ml-1">电子邮箱</label>
                   <input 
+                    id="auth-email"
                     type="email" 
+                    autoComplete={isRegistering ? 'email' : 'username'}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="email@example.com"
@@ -589,37 +559,29 @@ export default function App() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase ml-1 tracking-wider">登录密码</label>
+                  <label htmlFor="auth-password" className="text-xs font-semibold text-slate-300 ml-1">密码</label>
                   <input 
+                    id="auth-password"
                     type="password" 
+                    autoComplete={isRegistering ? 'new-password' : 'current-password'}
+                    aria-describedby={isRegistering ? 'auth-password-hint' : undefined}
+                    minLength={isRegistering ? 6 : undefined}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
                     required
                     className="w-full h-12 bg-white/10 border border-white/20 rounded-xl px-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white/20 transition-all placeholder:text-slate-500"
                   />
+                  {isRegistering && <p id="auth-password-hint" className="ml-1 text-xs text-slate-400">至少 6 个字符。</p>}
                 </div>
 
                 {authError && (
-                  <div className="flex flex-col gap-2 bg-red-400/10 p-3.5 rounded-xl border border-red-400/20">
+                  <div role="alert" className="flex flex-col gap-2 bg-red-400/10 p-3.5 rounded-xl border border-red-400/20">
                     <div className="flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
                       <div className="text-red-400 text-[11px] font-bold leading-relaxed whitespace-pre-wrap flex-1 text-left">
                         {authError}
                       </div>
                     </div>
-                    {authError.includes('账号或密码不正确') && (
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          setIsRegistering(true);
-                          setAuthError('已切换至注册模式。请重新输入密码并注册。');
-                        }}
-                        className="self-end text-[10px] bg-red-400/20 hover:bg-red-400/30 text-red-300 px-3 py-1.5 rounded-md transition-colors"
-                      >
-                        已删除该账号？点击注册新账号
-                      </button>
-                    )}
                   </div>
                 )}
 
@@ -628,16 +590,11 @@ export default function App() {
                   disabled={isLoading}
                   className="w-full h-12 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-600/30 flex items-center justify-center gap-2"
                 >
-                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : (isRegistering ? '注册并进入系统' : '立即登录')}
+                  {isLoading && <Loader2 aria-hidden="true" className="w-5 h-5 animate-spin" />}
+                  {isRegistering ? (isLoading ? '注册中…' : '创建账号') : (isLoading ? '登录中…' : '登录')}
                 </button>
               </form>
 
-              <div className="pt-4 text-center">
-                <p className="text-slate-500 text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2">
-                  <Database size={10} />
-                  Professional Fire Engineering Tool
-                </p>
-              </div>
             </div>
           </div>
         </motion.div>
