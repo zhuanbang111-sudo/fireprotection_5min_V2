@@ -47,7 +47,7 @@ import { SummaryReport } from './components/SummaryReport'; // 导入空间成�
 import { AdminDashboard } from './components/AdminDashboard'; // 导入管理员对账中心
 
 // @ts-ignore
-import { canExportShapefile, hasActivePro, isAdministrator } from './exportAccess';
+import { hasActivePro, isAdministrator } from './exportAccess';
 
 // 修复 Leaflet 默认图标在某些构建环境下无法显示的 Bug
 // @ts-ignore
@@ -237,6 +237,7 @@ export default function App() {
 
   const isVip = hasActivePro(user);
   const isAdmin = isAdministrator(user);
+  const [shapefileExportError, setShapefileExportError] = useState('');
 
   const vipExpiryDateStr = useMemo(() => {
     if (!user || !user.vip_expires_at) return '';
@@ -1135,14 +1136,7 @@ export default function App() {
 
   // 导出分析结果为 GIS 专业的 Shapefile 格式 (WGS84 坐标系)
   const exportSHP = async () => {
-    // 【商业卡口二：GIS 矢量数据资产物理卡卡口】
-    if (!canExportShapefile(user)) {
-      setVipModalTitle('🔒 导出 Shapefile 专属限制');
-      setVipModalDesc('由本引擎生成的具有精密拓扑坐标 of WGS84 消防规划面要素 Shapefile（GIS 行业绝对生产媒介形式）属于专业版专属功能。免费版限制该项导出，请升级 PRO 以一秒打包并无缝兼容 ArcGIS/QGIS 开展深度设计制图。');
-      setIsVipModalOpen(true);
-      addLog('⚠️ 导出拦截：GIS 矢量资产导出（Shapefile）为 PRO 专业版专用功能，已被保护卡口拦截。');
-      return;
-    }
+    setShapefileExportError('');
 
     const collection = turf.featureCollection(results.map(r => ({
       ...r.geometry,
@@ -1155,12 +1149,29 @@ export default function App() {
     
     try {
       addLog('📦 正在请求后端打包 WGS84 矢量 Shapefile 文件...');
-      
-      const response = await axios.post('/api/export-shp', { collection }, {
-        responseType: 'blob'
+      const token = localStorage.getItem('fire_isochrone_auth_token');
+      const response = await axios.post<Blob>('/api/export-shp', { collection }, {
+        responseType: 'blob',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
       });
-      
-      const blob = new Blob([response.data], { type: 'application/zip' });
+      const blob = response.data;
+      if (blob.type.split(';')[0] !== 'application/zip') {
+        throw new Error('导出接口没有返回 ZIP，请核对 Cloudflare 部署和 API 路由。');
+      }
+
+      const { default: JSZip } = await import('jszip');
+      const archive = await JSZip.loadAsync(await blob.arrayBuffer()).catch(() => null);
+      const shapefile = archive?.file(/\.shp$/i).find(file => {
+        const base = file.name.slice(0, -4);
+        return ['shx', 'dbf', 'prj'].every(extension => archive.file(`${base}.${extension}`));
+      });
+      const geometry = await shapefile?.async('uint8array');
+      if (!geometry || geometry.byteLength <= 100 || new DataView(
+        geometry.buffer, geometry.byteOffset, geometry.byteLength
+      ).getInt32(0) !== 9994) {
+        throw new Error('导出接口返回了空的或无效的 Shapefile，请核对 Cloudflare Worker 版本。');
+      }
+
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -1173,15 +1184,27 @@ export default function App() {
       addLog('✅ Shapefile 矢量资源包已成功下载！');
     } catch (e: unknown) {
       console.error(e);
-      let message = '请检查网络或后端服务';
-      if (axios.isAxiosError(e) && e.response?.data instanceof Blob) {
+      let message = e instanceof Error && !axios.isAxiosError(e)
+        ? e.message
+        : '导出请求失败，请检查网络或后端服务。';
+      if (axios.isAxiosError(e) && e.response) {
+        const { status, data } = e.response;
+        message = `导出请求失败（HTTP ${status}）。`;
         try {
-          const body = JSON.parse(await e.response.data.text());
-          if (typeof body.message === 'string') message = body.message;
+          if (data instanceof Blob) {
+            const body = JSON.parse(await data.text());
+            if (typeof body?.message === 'string') message += ` ${body.message}`;
+          }
         } catch {
-          // Keep the fallback for non-JSON responses.
+          // Keep the HTTP status for non-JSON responses.
+        }
+        if (status === 403 && !isAdmin && !isVip) {
+          setVipModalTitle('导出 Shapefile');
+          setVipModalDesc(message);
+          setIsVipModalOpen(true);
         }
       }
+      setShapefileExportError(message);
       addLog(`❌ 导出 Shapefile 失败：${message}`);
     }
   };
@@ -1921,6 +1944,9 @@ export default function App() {
                     />
                   </div>
                   <p className="text-sm text-slate-500">共完成 {results.length} 个站点的可达性评估</p>
+                  {shapefileExportError && (
+                    <p role="alert" className="mt-1 text-sm text-red-700">{shapefileExportError}</p>
+                  )}
                 </div>
                 <div className="flex gap-3">
                   {/* 导出为 Excel 按钮 */}
